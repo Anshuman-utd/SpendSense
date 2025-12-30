@@ -1,26 +1,60 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --background: #0f172a;
+  --foreground: #f8fafc;
+  --primary: #8b5cf6; /* Violet 500 */
+  --secondary: #ec4899; /* Pink 500 */
+  --accent: #06b6d4; /* Cyan 500 */
+  --card-bg: rgba(30, 41, 59, 0.7); /* Slate 800 with opacity */
+  --card-border: rgba(148, 163, 184, 0.1);
 }
 
 body {
-  background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--background);
+  font-family: 'Inter', sans-serif;
+  background-image: 
+    radial-gradient(at 0% 0%, rgba(139, 92, 246, 0.15) 0px, transparent 50%),
+    radial-gradient(at 100% 0%, rgba(236, 72, 153, 0.15) 0px, transparent 50%),
+    radial-gradient(at 100% 100%, rgba(6, 182, 212, 0.15) 0px, transparent 50%);
+  background-attachment: fixed;
+}
+
+@layer components {
+  .glass-card {
+    @apply backdrop-blur-md bg-slate-800/60 border border-slate-700/50 rounded-2xl shadow-xl;
+  }
+  
+  .glass-input {
+    @apply bg-slate-900/50 border border-slate-700 text-white placeholder-slate-400 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-transparent transition-all outline-none;
+  }
+
+  .btn-primary {
+    @apply bg-gradient-to-r from-violet-600 to-fuchsia-600 hover:from-violet-500 hover:to-fuchsia-500 text-white font-medium py-2 px-4 rounded-lg transition-all shadow-lg hover:shadow-violet-500/25 active:scale-95;
+  }
+
+  .btn-secondary {
+    @apply bg-slate-700 hover:bg-slate-600 text-white font-medium py-2 px-4 rounded-lg transition-all active:scale-95;
+  }
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #475569;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #64748b;
+}
+
+/* Recharts Custom Tooltip */
+.recharts-tooltip-cursor {
+  fill: rgba(255, 255, 255, 0.05);
 }
