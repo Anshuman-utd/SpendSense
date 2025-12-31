@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from 'react';
+import { useSession } from 'next-auth/react';
 import { 
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, BarChart, Bar, Legend
@@ -10,17 +11,31 @@ import { ArrowDownIcon, ArrowUpIcon, ArrowTopRightOnSquareIcon } from '@heroicon
 const COLORS = ['#10b981', '#3b82f6', '#f59e0b', '#ec4899', '#8b5cf6', '#64748b'];
 
 export default function AnalyticsPage() {
+  const { data: session } = useSession();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [timeRange, setTimeRange] = useState('month'); // 'week', 'month', 'year'
+  const [timeRange, setTimeRange] = useState('this-month'); // 'this-month', 'last-month'
 
   useEffect(() => {
     async function fetchData() {
+      if (!session) return;
       try {
-        const res = await fetch('/api/analytics');
+        const now = new Date();
+        let queryYear = now.getFullYear();
+        let queryMonth = now.getMonth();
+
+        if (timeRange === 'last-month') {
+           const lastMonthDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+           queryYear = lastMonthDate.getFullYear();
+           queryMonth = lastMonthDate.getMonth();
+        }
+
+        const res = await fetch(`/api/analytics?month=${queryMonth}&year=${queryYear}`);
         const json = await res.json();
         if (json.success) {
           setData(json.data);
+        } else {
+             console.error("Analytics fetch failed:", json.error);
         }
       } catch (error) {
         console.error('Failed to fetch analytics:', error);
@@ -29,7 +44,7 @@ export default function AnalyticsPage() {
       }
     }
     fetchData();
-  }, []);
+  }, [timeRange, session]);
 
   if (loading) return <div className="p-8 text-white">Loading analytics...</div>;
   if (!data) return <div className="p-8 text-white">Failed to load data</div>;
@@ -40,21 +55,21 @@ export default function AnalyticsPage() {
       amount: item.amount
   }));
 
-  // Process Weekly Comparison (Simulated from daily data for "This Month")
+  // Process Weekly Comparison
   // Group days into 4 weeks
   const weeklyData = [
-      { name: 'Week 1', thisMonth: 0, lastMonth: data.lastMonthTotal / 4 }, // Approx last month
-      { name: 'Week 2', thisMonth: 0, lastMonth: data.lastMonthTotal / 4 },
-      { name: 'Week 3', thisMonth: 0, lastMonth: data.lastMonthTotal / 4 },
-      { name: 'Week 4', thisMonth: 0, lastMonth: data.lastMonthTotal / 4 },
+      { name: 'Week 1', selectedPeriod: 0, previousPeriod: data.lastMonthTotal / 4 }, 
+      { name: 'Week 2', selectedPeriod: 0, previousPeriod: data.lastMonthTotal / 4 },
+      { name: 'Week 3', selectedPeriod: 0, previousPeriod: data.lastMonthTotal / 4 },
+      { name: 'Week 4', selectedPeriod: 0, previousPeriod: data.lastMonthTotal / 4 },
   ];
 
   data.dailyTrend.forEach(item => {
       const day = item.day;
-      if (day <= 7) weeklyData[0].thisMonth += item.amount;
-      else if (day <= 14) weeklyData[1].thisMonth += item.amount;
-      else if (day <= 21) weeklyData[2].thisMonth += item.amount;
-      else weeklyData[3].thisMonth += item.amount;
+      if (day <= 7) weeklyData[0].selectedPeriod += item.amount;
+      else if (day <= 14) weeklyData[1].selectedPeriod += item.amount;
+      else if (day <= 21) weeklyData[2].selectedPeriod += item.amount;
+      else weeklyData[3].selectedPeriod += item.amount;
   });
 
   // Calculate Category Breakdowns
@@ -74,19 +89,22 @@ export default function AnalyticsPage() {
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
-        <h1 className="text-2xl font-bold text-white">Analytics</h1>
+        <h1 className="text-3xl font-bold text-white">Analytics</h1>
         <div className="flex gap-4">
              {/* Time Range Toggles */}
              <div className="bg-[#18181b] p-1 rounded-xl border border-[#27272a] flex">
-                {['Week', 'Month', 'Year'].map((range) => (
-                    <button 
-                        key={range}
-                        onClick={() => setTimeRange(range.toLowerCase())}
-                        className={`px-4 py-1.5 text-sm font-medium rounded-lg transition-colors ${timeRange === range.toLowerCase() ? 'bg-emerald-500 text-black' : 'text-zinc-400 hover:text-white'}`}
-                    >
-                        {range}
-                    </button>
-                ))}
+                <button 
+                    onClick={() => setTimeRange('this-month')}
+                    className={`px-4 py-1.5 text-sm font-medium rounded-lg transition-colors ${timeRange === 'this-month' ? 'bg-emerald-500 text-black' : 'text-zinc-400 hover:text-white'}`}
+                >
+                    This Month
+                </button>
+                <button 
+                    onClick={() => setTimeRange('last-month')}
+                    className={`px-4 py-1.5 text-sm font-medium rounded-lg transition-colors ${timeRange === 'last-month' ? 'bg-emerald-500 text-black' : 'text-zinc-400 hover:text-white'}`}
+                >
+                    Last Month
+                </button>
              </div>
              <button className="flex items-center gap-2 px-4 py-2 bg-[#18181b] border border-[#27272a] rounded-xl text-sm font-medium text-white hover:bg-[#27272a] transition-colors">
                 <ArrowTopRightOnSquareIcon className="w-4 h-4" /> Export Report
@@ -175,8 +193,8 @@ export default function AnalyticsPage() {
                             contentStyle={{ backgroundColor: '#09090b', borderColor: '#27272a', color: '#fff' }}
                         />
                         <Legend wrapperStyle={{ fontSize: '12px', paddingTop: '10px' }} />
-                        <Bar dataKey="thisMonth" name="This Month" fill="#10b981" radius={[4, 4, 0, 0]} />
-                        <Bar dataKey="lastMonth" name="Last Month (Avg)" fill="#3f3f46" radius={[4, 4, 0, 0]} />
+                        <Bar dataKey="selectedPeriod" name={timeRange === 'this-month' ? "This Month" : "Selected Month"} fill="#10b981" radius={[4, 4, 0, 0]} />
+                        <Bar dataKey="previousPeriod" name={timeRange === 'this-month' ? "Last Month (Avg)" : "Previous Month (Avg)"} fill="#3f3f46" radius={[4, 4, 0, 0]} />
                     </BarChart>
                 </ResponsiveContainer>
              </div>
@@ -229,7 +247,7 @@ export default function AnalyticsPage() {
                              <span className={cat.change > 0 ? "text-red-500" : "text-emerald-500"}>
                                  {Math.abs(cat.change).toFixed(1)}%
                              </span>
-                             <span className="text-zinc-500">vs last month</span>
+                              <span className="text-zinc-500">vs previous month</span>
                          </div>
                      </div>
                  ))}

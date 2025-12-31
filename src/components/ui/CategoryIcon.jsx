@@ -7,7 +7,9 @@ import {
   AcademicCapIcon, 
   BriefcaseIcon, 
   BanknotesIcon, 
-  QuestionMarkCircleIcon 
+  QuestionMarkCircleIcon,
+  HomeIcon,
+  FaceSmileIcon
 } from '@heroicons/react/24/outline';
 
 const categoryConfig = {
@@ -19,6 +21,8 @@ const categoryConfig = {
   Health: { icon: HeartIcon, color: 'text-red-500', bg: 'bg-red-500/10' },
   Education: { icon: AcademicCapIcon, color: 'text-indigo-500', bg: 'bg-indigo-500/10' },
   Work: { icon: BriefcaseIcon, color: 'text-purple-500', bg: 'bg-purple-500/10' },
+  Housing: { icon: HomeIcon, color: 'text-teal-500', bg: 'bg-teal-500/10' },
+  Personal: { icon: FaceSmileIcon, color: 'text-purple-500', bg: 'bg-purple-500/10' },
   Other: { icon: QuestionMarkCircleIcon, color: 'text-zinc-500', bg: 'bg-zinc-500/10' },
 };
 

@@ -13,6 +13,7 @@ export default function ExpensesPage() {
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [viewMode, setViewMode] = useState('list'); // 'list' or 'grid'
+  const [filterType, setFilterType] = useState('this-month'); // 'this-month' | 'last-month'
 
   // Filter States
   const [searchQuery, setSearchQuery] = useState('');
@@ -37,7 +38,18 @@ export default function ExpensesPage() {
   const fetchExpenses = async () => {
     try {
       setLoading(true);
-      const res = await fetch('/api/expenses');
+      
+      const now = new Date();
+      let queryMonthStr = '';
+      
+      if (filterType === 'this-month') {
+          queryMonthStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+      } else if (filterType === 'last-month') {
+          const lastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+          queryMonthStr = `${lastMonth.getFullYear()}-${String(lastMonth.getMonth() + 1).padStart(2, '0')}`;
+      }
+
+      const res = await fetch(`/api/expenses?month=${queryMonthStr}`);
       const data = await res.json();
       if (data.success) {
         setExpenses(data.data);
@@ -51,7 +63,7 @@ export default function ExpensesPage() {
 
   useEffect(() => {
     fetchExpenses();
-  }, []);
+  }, [filterType]);
 
   // Filter Logic
   const filteredExpenses = useMemo(() => {
@@ -90,6 +102,22 @@ export default function ExpensesPage() {
               onChange={(e) => setSearchQuery(e.target.value)}
               className="w-full bg-[#09090b] border border-[#27272a] rounded-xl py-2.5 pl-10 pr-4 text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-emerald-500 transition-colors"
             />
+        </div>
+        
+        {/* Month Filter Toggle */}
+        <div className="bg-[#09090b] p-1 rounded-xl border border-[#27272a] flex">
+            <button 
+                onClick={() => setFilterType('this-month')}
+                className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${filterType === 'this-month' ? 'bg-emerald-500 text-black' : 'text-zinc-400 hover:text-white'}`}
+            >
+                This Month
+            </button>
+            <button 
+                onClick={() => setFilterType('last-month')}
+                className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${filterType === 'last-month' ? 'bg-emerald-500 text-black' : 'text-zinc-400 hover:text-white'}`}
+            >
+                Last Month
+            </button>
         </div>
         <div className="flex items-center gap-3">
             {/* Category Filter */}

@@ -22,7 +22,7 @@ export async function GET(req) {
         const month = parseInt(searchParams.get('month') || now.getMonth());
 
         const startOfMonth = new Date(year, month, 1);
-        const endOfMonth = new Date(year, month + 1, 0, 23, 59, 59);
+        const endOfMonth = new Date(year, month + 1, 0, 23, 59, 59, 999);
 
         // 1. Total Spending
         const totalSpendingPipeline = [
@@ -76,7 +76,7 @@ export async function GET(req) {
 
         // Last Month Pipeline
         const lastMonthStart = new Date(year, month - 1, 1); // Corrected month calculation for last month
-        const lastMonthEnd = new Date(year, month, 0, 23, 59, 59); // Corrected month calculation for last month
+        const lastMonthEnd = new Date(year, month, 0, 23, 59, 59, 999); // Corrected month calculation for last month
 
         const lastMonthTotalPipeline = [
             { $match: { userId: userId, date: { $gte: lastMonthStart, $lte: lastMonthEnd } } }, // Used existing userId

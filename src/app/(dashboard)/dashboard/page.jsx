@@ -27,9 +27,12 @@ export default function Dashboard() {
     lastMonthTotal: 0,
     byCategory: [], 
     dailyTrend: [], 
+    dailyTrend: [], 
     upcomingRecurring: [],
-    lastMonthCount: 0
+    lastMonthCount: 0,
+    monthlyBudget: 0
   });
+  const [filterType, setFilterType] = useState('this-month'); // 'this-month' | 'last-month'
   const [recentExpenses, setRecentExpenses] = useState([]);
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -38,17 +41,34 @@ export default function Dashboard() {
 
   const fetchData = async () => {
      try {
-       const [analyticsRes, expensesRes, insightsRes] = await Promise.all([
-         fetch('/api/analytics'),
+       const now = new Date();
+       let queryYear = now.getFullYear();
+       let queryMonth = now.getMonth();
+
+       if (filterType === 'last-month') {
+          const lastMonthDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+          queryYear = lastMonthDate.getFullYear();
+          queryMonth = lastMonthDate.getMonth();
+       }
+
+       const [analyticsRes, expensesRes, insightsRes, budgetRes] = await Promise.all([
+         fetch(`/api/analytics?month=${queryMonth}&year=${queryYear}`),
          fetch('/api/expenses?limit=5'),
-         fetch('/api/ai/insights')
+         fetch('/api/ai/insights'),
+         fetch(`/api/budgets?month=${queryMonth}&year=${queryYear}`)
        ]);
        
        const analyticsData = await analyticsRes.json();
        const expensesData = await expensesRes.json();
        const insightsData = await insightsRes.json();
+       const budgetData = await budgetRes.json();
 
-       if (analyticsData.success) setStats(analyticsData.data);
+       if (analyticsData.success) {
+           setStats({ 
+               ...analyticsData.data, 
+               monthlyBudget: budgetData.success ? budgetData.totalBudget : 0 
+           });
+       }
        if (expensesData.success) setRecentExpenses(expensesData.data);
        if (insightsData.success) setInsight(insightsData.data);
      } catch (error) {
@@ -60,10 +80,10 @@ export default function Dashboard() {
 
   useEffect(() => {
     if (session) fetchData();
-  }, [session]);
+  }, [session, filterType]);
 
-  const budgetRemaining = (session?.user?.monthlyBudget || 0) - stats.total;
-  const budgetProgress = session?.user?.monthlyBudget ? (stats.total / session.user.monthlyBudget) * 100 : 0;
+  const budgetRemaining = (stats.monthlyBudget || 0) - stats.total;
+  const budgetProgress = stats.monthlyBudget > 0 ? (stats.total / stats.monthlyBudget) * 100 : 0;
   
   // Prepare chart data (ensure it has data for the whole week/month view if possible, or just what we have)
   const chartData = stats.dailyTrend.map(d => ({ day: d.day, amount: d.amount }));
@@ -170,9 +190,13 @@ export default function Dashboard() {
            <div className="bg-[#18181b] p-6 rounded-2xl border border-[#27272a]">
              <div className="flex justify-between items-center mb-6">
                <h3 className="font-semibold text-lg">Spending Trends</h3>
-               <select className="bg-[#27272a] text-xs text-zinc-400 border border-[#3f3f46] rounded-lg px-3 py-1.5 focus:outline-none">
-                 <option>This Month</option>
-                 <option>Last Month</option>
+               <select 
+                  value={filterType}
+                  onChange={(e) => setFilterType(e.target.value)}
+                  className="bg-[#27272a] text-xs text-zinc-400 border border-[#3f3f46] rounded-lg px-3 py-1.5 focus:outline-none"
+                >
+                  <option value="this-month">This Month</option>
+                  <option value="last-month">Last Month</option>
                </select>
              </div>
              <div className="h-64 w-full">

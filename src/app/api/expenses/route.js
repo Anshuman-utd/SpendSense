@@ -25,8 +25,12 @@ export async function GET(req) {
         }
 
         if (month) {
-            const start = new Date(`${month}-01`);
-            const end = new Date(start.getFullYear(), start.getMonth() + 1, 0);
+            const [year, monthVal] = month.split('-').map(Number);
+            // Create dates in local time (or consistently) to capture the full day
+            // Start of month: 1st day at 00:00:00
+            const start = new Date(year, monthVal - 1, 1);
+            // End of month: Last day at 23:59:59.999
+            const end = new Date(year, monthVal, 0, 23, 59, 59, 999);
             query.date = { $gte: start, $lte: end };
         }
 
