@@ -83,12 +83,49 @@ export async function GET(req) {
             { $group: { _id: null, total: { $sum: "$amount" }, count: { $sum: 1 } } }
         ];
 
-        const [totalResult, categoryResult, dailyResult, recurringResult, lastMonthResult] = await Promise.all([
+        // 4. Top Merchants
+        const topMerchantsPipeline = [
+            {
+                $match: {
+                    userId: userId,
+                    date: { $gte: startOfMonth, $lte: endOfMonth }
+                }
+            },
+            {
+                $group: {
+                    _id: '$merchant',
+                    total: { $sum: '$amount' },
+                    count: { $sum: 1 }
+                }
+            },
+            { $sort: { total: -1 } },
+            { $limit: 3 }
+        ];
+
+        // 5. Last Month Category Spending (for comparison)
+        const lastMonthCategoryPipeline = [
+            {
+                $match: {
+                    userId: userId,
+                    date: { $gte: lastMonthStart, $lte: lastMonthEnd }
+                }
+            },
+            {
+                $group: {
+                    _id: '$category',
+                    total: { $sum: '$amount' }
+                }
+            }
+        ];
+
+        const [totalResult, categoryResult, dailyResult, recurringResult, lastMonthResult, topMerchantsResult, lastMonthCategoryResult] = await Promise.all([
             Expense.aggregate(totalSpendingPipeline),
             Expense.aggregate(categorySpendingPipeline),
             Expense.aggregate(dailySpendingPipeline),
             Expense.find({ userId: userId, isRecurring: true }).sort({ date: 1 }).limit(5),
-            Expense.aggregate(lastMonthTotalPipeline)
+            Expense.aggregate(lastMonthTotalPipeline),
+            Expense.aggregate(topMerchantsPipeline),
+            Expense.aggregate(lastMonthCategoryPipeline)
         ]);
 
         const stats = {
@@ -96,8 +133,14 @@ export async function GET(req) {
             lastMonthTotal: lastMonthResult[0]?.total || 0,
             lastMonthCount: lastMonthResult[0]?.count || 0,
             byCategory: categoryResult.map(item => ({ name: item._id, value: item.total })),
+            lastMonthByCategory: lastMonthCategoryResult.map(item => ({ name: item._id, value: item.total })),
             dailyTrend: dailyResult.map(item => ({ day: item._id, amount: item.total })),
-            upcomingRecurring: recurringResult
+            upcomingRecurring: recurringResult,
+            topMerchants: topMerchantsResult.map(item => ({
+                merchant: item._id || 'Unknown',
+                amount: item.total,
+                count: item.count
+            }))
         };
 
         return NextResponse.json({ success: true, data: stats });

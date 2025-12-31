@@ -1,50 +1,26 @@
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
-import OpenAI from 'openai';
 import { authOptions } from '../../auth/[...nextauth]/route';
+import AIInsight from '@/models/AIInsight';
+import connectDB from '@/lib/db';
 
-export async function POST(req) {
+export async function GET(req) {
     try {
         const session = await getServerSession(authOptions);
         if (!session) {
             return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
         }
 
-        const openai = new OpenAI({
-            apiKey: process.env.OPENAI_API_KEY,
-        });
+        await connectDB();
+        const userId = session.user.id;
 
-        const { expenseSummary, userBudget } = await req.json();
+        // Fetch the latest insight
+        const latestInsight = await AIInsight.findOne({ userId }).sort({ createdAt: -1 });
 
-        const prompt = `
-      You are a financial advisor. Analyze the following spending summary for this month:
-      ${JSON.stringify(expenseSummary)}
-      
-      The user's monthly budget is: ${userBudget || 'Not set'}.
+        return NextResponse.json({ success: true, data: latestInsight });
 
-      Provide:
-      1. A brief 2-sentence summary of their habits.
-      2. One actionable tip to save money.
-      3. A budget recommendation (if they are overspending or haven't set one).
-
-      Return the response in JSON format with keys: "summary", "tip", "budgetRecommendation".
-    `;
-
-        const response = await openai.chat.completions.create({
-            model: "gpt-4-turbo",
-            messages: [
-                { role: "system", content: "You are a helpful financial assistant." },
-                { role: "user", content: prompt }
-            ],
-            response_format: { type: "json_object" },
-        });
-
-        const content = response.choices[0].message.content;
-        const data = JSON.parse(content);
-
-        return NextResponse.json({ success: true, data });
     } catch (error) {
-        console.error('AI Insights Error:', error);
-        return NextResponse.json({ success: false, error: 'AI processing failed' }, { status: 500 });
+        console.error('Fetch Insights Error:', error);
+        return NextResponse.json({ success: false, error: 'Failed to fetch insights' }, { status: 500 });
     }
 }

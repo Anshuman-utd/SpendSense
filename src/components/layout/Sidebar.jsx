@@ -21,7 +21,7 @@ const navigation = [
   { name: 'Expenses', href: '/expenses', icon: BanknotesIcon },
   { name: 'Scan Receipt', href: '/scan-receipt', icon: CameraIcon },
   { name: 'Analytics', href: '/analytics', icon: ChartBarIcon },
-  { name: 'AI Insights', href: '/reports', icon: SparklesIcon },
+  { name: 'AI Insights', href: '/ai-insights', icon: SparklesIcon },
   { name: 'Budget', href: '#', icon: WalletIcon },
   { name: 'Recurring', href: '#', icon: ArrowPathIcon },
   { name: 'Settings', href: '#', icon: Cog6ToothIcon },

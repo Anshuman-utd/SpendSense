@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import { MagnifyingGlassIcon, FunnelIcon, CalendarIcon, Squares2X2Icon, ListBulletIcon } from '@heroicons/react/24/outline';
 import AddExpenseModal from '@/components/expenses/AddExpenseModal';
 import MiniCalendar from '@/components/ui/MiniCalendar';
+import CategoryIcon, { getCategoryStyle } from '@/components/ui/CategoryIcon';
 
 const CATEGORIES = ['Food', 'Transport', 'Shopping', 'Entertainment', 'Housing', 'Utilities', 'Health', 'Education', 'Personal', 'Other'];
 
@@ -74,7 +75,7 @@ export default function ExpensesPage() {
     <div className="space-y-6">
       <div className="flex justify-between items-end">
         <div>
-          <h1 className="text-2xl font-bold text-white mb-1">Expenses</h1>
+          <h1 className="text-3xl font-bold text-white mb-1">Expenses</h1>
         </div>
       </div>
 
@@ -158,18 +159,11 @@ export default function ExpensesPage() {
                  // List View Layout
                  <>
                     <div className="flex items-center gap-5">
-                        <div className="w-12 h-12 rounded-xl bg-zinc-800 flex items-center justify-center text-2xl">
-                            {/* Simple icon logic mapping */}
-                            {expense.category === 'Food' ? '🍽️' : 
-                             expense.category === 'Transport' ? '🚗' : 
-                             expense.category === 'Shopping' ? '🛍️' : 
-                             expense.category === 'Entertainment' ? '🎮' : 
-                             expense.category === 'Housing' ? '🏠' : '📝'}
-                        </div>
+                        <CategoryIcon category={expense.category} />
                         <div>
                             <h3 className="font-bold text-white text-lg">{expense.merchant || expense.description}</h3>
                             <div className="flex items-center gap-3 text-sm mt-1">
-                                <span className="bg-pink-500/10 text-pink-500 px-2 py-0.5 rounded text-xs font-medium border border-pink-500/20">
+                                <span className={`px-2 py-0.5 rounded text-xs font-medium border border-white/5 ${getCategoryStyle(expense.category).text} ${getCategoryStyle(expense.category).bg}`}>
                                     {expense.category}
                                 </span>
                                 <span className="text-zinc-500">
@@ -191,34 +185,14 @@ export default function ExpensesPage() {
                  // Grid View Layout (Matching User Image Request)
                  <>
                     <div className="flex justify-between items-start mb-4">
-                        <div className={`w-12 h-12 rounded-xl flex items-center justify-center text-xl
-                             ${expense.category === 'Food' ? 'bg-orange-900/20 text-orange-500' : 
-                               expense.category === 'Shopping' ? 'bg-pink-900/20 text-pink-500' : 
-                               expense.category === 'Transport' ? 'bg-blue-900/20 text-blue-500' : 
-                               expense.category === 'Entertainment' ? 'bg-yellow-900/20 text-yellow-500' : 
-                               'bg-zinc-800 text-zinc-400'
-                             }
-                        `}>
-                             {expense.category === 'Food' ? '🍽️' : 
-                              expense.category === 'Transport' ? '🚗' : 
-                              expense.category === 'Shopping' ? '🛍️' : 
-                              expense.category === 'Entertainment' ? '🎮' : 
-                              expense.category === 'Housing' ? '🏠' : '📝'} 
-                        </div>
+                        <CategoryIcon category={expense.category} />
                         <p className="text-xl font-bold text-white">-${expense.amount.toFixed(2)}</p>
                     </div>
                     
                     <div>
                         <h3 className="font-bold text-white text-lg mb-2 truncate">{expense.merchant || expense.description}</h3>
                         <div className="flex items-center gap-2 flex-wrap">
-                            <span className={`px-2.5 py-1 rounded-md text-xs font-bold
-                                ${expense.category === 'Food' ? 'bg-orange-900/30 text-orange-500' : 
-                                expense.category === 'Shopping' ? 'bg-pink-900/30 text-pink-500' : 
-                                expense.category === 'Transport' ? 'bg-blue-900/30 text-blue-500' : 
-                                expense.category === 'Entertainment' ? 'bg-yellow-900/30 text-yellow-500' : 
-                                'bg-zinc-800 text-zinc-400'
-                                }
-                            `}>
+                            <span className={`px-2.5 py-1 rounded-md text-xs font-bold ${getCategoryStyle(expense.category).bg} ${getCategoryStyle(expense.category).text}`}>
                                 {expense.category}
                             </span>
                             <span className="text-zinc-500 text-xs font-medium">
@@ -236,7 +210,7 @@ export default function ExpensesPage() {
                     </div>
                  </>
              )}
-             
+              
           </div>
         ))}
         

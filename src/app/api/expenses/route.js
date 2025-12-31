@@ -49,19 +49,22 @@ export async function POST(req) {
         const body = await req.json();
         const { amount, category, date, description, merchant, paymentMethod, receiptUrl, isRecurring, recurringInterval } = body;
 
-        // Validate required fields (basic validation, model does more)
-        if (!amount || !category || !date || !description) {
+        // Validate required fields
+        if (!amount || !category || !date) {
             return NextResponse.json({ success: false, error: 'Missing required fields' }, { status: 400 });
         }
 
         await dbConnect();
+
+        // Use description if provided, otherwise fallback to Merchant, then to Category
+        const finalDescription = description || merchant || `${category} Expense`;
 
         const expense = await Expense.create({
             userId: session.user.id,
             amount,
             category,
             date,
-            description,
+            description: finalDescription,
             merchant,
             paymentMethod,
             receiptUrl,

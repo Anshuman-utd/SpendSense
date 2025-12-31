@@ -18,6 +18,7 @@ import {
 import Link from 'next/link';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import AddExpenseModal from '@/components/expenses/AddExpenseModal';
+import CategoryIcon, { getCategoryStyle } from '@/components/ui/CategoryIcon';
 
 export default function Dashboard() {
   const { data: session } = useSession();
@@ -33,18 +34,23 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
 
+  const [insight, setInsight] = useState(null);
+
   const fetchData = async () => {
      try {
-       const [analyticsRes, expensesRes] = await Promise.all([
+       const [analyticsRes, expensesRes, insightsRes] = await Promise.all([
          fetch('/api/analytics'),
-         fetch('/api/expenses?limit=5')
+         fetch('/api/expenses?limit=5'),
+         fetch('/api/ai/insights')
        ]);
        
        const analyticsData = await analyticsRes.json();
        const expensesData = await expensesRes.json();
+       const insightsData = await insightsRes.json();
 
        if (analyticsData.success) setStats(analyticsData.data);
        if (expensesData.success) setRecentExpenses(expensesData.data);
+       if (insightsData.success) setInsight(insightsData.data);
      } catch (error) {
        console.error("Failed to fetch dashboard data", error);
      } finally {
@@ -204,14 +210,11 @@ export default function Dashboard() {
                {recentExpenses.map((expense) => (
                  <div key={expense._id} className="bg-[#18181b] p-4 rounded-xl border border-[#27272a] flex justify-between items-center hover:bg-[#27272a] transition-colors group">
                    <div className="flex items-center gap-4">
-                     <div className="w-10 h-10 rounded-full bg-zinc-800 flex items-center justify-center group-hover:bg-emerald-500/10 group-hover:text-emerald-500 transition-colors">
-                       <WalletIcon className="w-5 h-5" /> 
-                       {/* Ideally map category icons here */}
-                     </div>
+                     <CategoryIcon category={expense.category} />
                      <div>
                        <p className="font-semibold text-sm">{expense.description}</p>
                        <div className="flex items-center gap-2 mt-1">
-                          <span className="text-xs px-2 py-0.5 rounded bg-zinc-800 text-zinc-400">
+                          <span className={`text-xs px-2 py-0.5 rounded ${getCategoryStyle(expense.category).bg} ${getCategoryStyle(expense.category).text}`}>
                              {expense.category}
                           </span>
                           <span className="text-xs text-zinc-500">
@@ -242,7 +245,7 @@ export default function Dashboard() {
                <Link href="/scan-receipt" className="w-full flex items-center justify-center gap-2 bg-[#27272a] hover:bg-[#3f3f46] text-white font-medium py-3 rounded-xl transition-all border border-[#3f3f46]">
                   <CameraIcon className="w-5 h-5" /> Scan Receipt
                </Link>
-               <Link href="/reports" className="w-full flex items-center justify-center gap-2 bg-[#27272a] hover:bg-[#3f3f46] text-white font-medium py-3 rounded-xl transition-all border border-[#3f3f46]">
+               <Link href="/analytics" className="w-full flex items-center justify-center gap-2 bg-[#27272a] hover:bg-[#3f3f46] text-white font-medium py-3 rounded-xl transition-all border border-[#3f3f46]">
                   <DocumentChartBarIcon className="w-5 h-5" /> View Reports
                </Link>
              </div>
@@ -256,11 +259,17 @@ export default function Dashboard() {
                <div className="flex items-center gap-2 text-indigo-400 font-bold mb-2">
                  <SparklesIcon className="w-5 h-5" /> AI Insight
                </div>
-               <p className="text-sm text-zinc-300 mb-4 leading-relaxed">
-                 You re spending 23% more on food this month. Consider meal prepping to save ~$120.
-               </p>
-               <Link href="/reports" className="text-xs bg-indigo-500/20 text-indigo-300 px-3 py-2 rounded-lg hover:bg-indigo-500/30 transition-colors inline-block font-medium">
-                 View All Insights →
+               {insight ? (
+                   <p className="text-sm text-zinc-300 mb-4 leading-relaxed line-clamp-3">
+                     {insight.data.summary}
+                   </p>
+               ) : (
+                   <p className="text-sm text-zinc-500 mb-4">
+                     No insights generated yet.
+                   </p>
+               )}
+               <Link href="/ai-insights" className="text-xs bg-indigo-500/20 text-indigo-300 px-3 py-2 rounded-lg hover:bg-indigo-500/30 transition-colors inline-block font-medium">
+                 {insight ? 'View Details →' : 'Generate Now →'}
                </Link>
              </div>
           </div>
