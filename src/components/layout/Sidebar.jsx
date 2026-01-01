@@ -23,8 +23,8 @@ const navigation = [
   { name: 'Analytics', href: '/analytics', icon: ChartBarIcon },
   { name: 'AI Insights', href: '/ai-insights', icon: SparklesIcon },
   { name: 'Budget', href: '/budget', icon: WalletIcon },
-  { name: 'Recurring', href: '#', icon: ArrowPathIcon },
-  { name: 'Settings', href: '#', icon: Cog6ToothIcon },
+  { name: 'Recurring', href: '/recurring', icon: ArrowPathIcon },
+  { name: 'Settings', href: '/settings', icon: Cog6ToothIcon },
 ];
 
 export default function Sidebar() {

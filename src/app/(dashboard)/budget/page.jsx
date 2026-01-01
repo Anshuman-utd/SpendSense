@@ -7,11 +7,15 @@ import EditBudgetModal from '@/components/budget/EditBudgetModal';
 
 const CATEGORIES = ['Food', 'Transport', 'Shopping', 'Entertainment', 'Housing', 'Utilities', 'Health', 'Education', 'Personal', 'Other'];
 
+import UserMenu from '@/components/layout/UserMenu';
+
 export default function BudgetPage() {
   const { data: session } = useSession();
   const [loading, setLoading] = useState(true);
   const [budgetData, setBudgetData] = useState(null);
   const [expensesData, setExpensesData] = useState([]);
+  // State for Recurring
+  const [recurringData, setRecurringData] = useState([]);
   
   // Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -36,8 +40,13 @@ export default function BudgetPage() {
         const expensesRes = await fetch(`/api/expenses?month=${expenseMonthStr}`);
         const expensesJson = await expensesRes.json();
 
+        // Fetch Recurring Expenses
+        const recurringRes = await fetch('/api/expenses/recurring');
+        const recurringJson = await recurringRes.json();
+
         if (budgetRes.ok) setBudgetData(budgetJson);
         if (expensesRes.ok) setExpensesData(expensesJson.data);
+        if (recurringRes.ok) setRecurringData(recurringJson.data.subscriptions || []);
 
     } catch (error) {
         console.error("Failed to fetch budget data", error);
@@ -87,6 +96,8 @@ export default function BudgetPage() {
   CATEGORIES.forEach(cat => spentByCategory[cat] = 0);
   
   let totalSpent = 0;
+
+  // 1. Add actual expenses
   expensesData.forEach(exp => {
       const cat = exp.category;
       if (spentByCategory[cat] !== undefined) {
@@ -96,6 +107,32 @@ export default function BudgetPage() {
            spentByCategory['Other'] = (spentByCategory['Other'] || 0) + exp.amount;
       }
       totalSpent += exp.amount;
+  });
+
+  // 2. Add projected recurring expenses (if active and not already in actual expenses)
+  const normalizedExpenses = expensesData.map(e => (e.merchant || e.description || '').toLowerCase().trim());
+  
+  recurringData.forEach(sub => {
+      // Only count active
+      if (sub.subscriptionStatus === 'inactive') return;
+
+      // Check if this subscription is already represented in this month's expenses
+      const subKey = (sub.merchant || sub.description || '').toLowerCase().trim();
+      
+      // Simple check: is there an expense with same name?
+      // A more robust check might check within a date range, but strict name matching is a decent proxy for now
+      // given "active" definition.
+      // However, if the user added it manually, it IS in expensesData.
+      if (!normalizedExpenses.includes(subKey)) {
+           // It's active but not yet paid/recorded this month -> Add projected cost
+          const cat = sub.category;
+          if (spentByCategory[cat] !== undefined) {
+              spentByCategory[cat] += sub.amount;
+          } else {
+              spentByCategory['Other'] = (spentByCategory['Other'] || 0) + sub.amount;
+          }
+          totalSpent += sub.amount;
+      }
   });
 
   const remaining = totalBudget - totalSpent;

@@ -12,6 +12,7 @@ export async function POST(req) {
 
         const formData = await req.formData();
         const file = formData.get('file');
+        const folder = formData.get('folder') || 'receipts'; // Default to receipts subfolder
 
         if (!file) {
             return NextResponse.json({ error: 'No file uploaded' }, { status: 400 });
@@ -22,7 +23,7 @@ export async function POST(req) {
 
         const uploadResponse = await new Promise((resolve, reject) => {
             cloudinary.uploader.upload_stream(
-                { folder: 'spendsense/receipts' },
+                { folder: `spendsense/${folder}` },
                 (error, result) => {
                     if (error) reject(error);
                     else resolve(result);

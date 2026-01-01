@@ -16,7 +16,8 @@ export async function GET(req) {
         // Basic filtering support
         const { searchParams } = new URL(req.url);
         const category = searchParams.get('category');
-        const month = searchParams.get('month'); // Format: YYYY-MM
+        const limit = searchParams.get('limit');
+        const month = searchParams.get('month');
 
         let query = { userId: session.user.id };
 
@@ -34,7 +35,13 @@ export async function GET(req) {
             query.date = { $gte: start, $lte: end };
         }
 
-        const expenses = await Expense.find(query).sort({ date: -1 });
+        let expensesQuery = Expense.find(query).sort({ date: -1 });
+
+        if (limit) {
+            expensesQuery = expensesQuery.limit(parseInt(limit));
+        }
+
+        const expenses = await expensesQuery;
 
         return NextResponse.json({ success: true, count: expenses.length, data: expenses });
     } catch (error) {

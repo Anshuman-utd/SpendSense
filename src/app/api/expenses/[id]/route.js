@@ -11,7 +11,7 @@ export async function GET(req, { params }) {
             return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
         }
 
-        const { id } = params;
+        const { id } = await params;
         await dbConnect();
 
         const expense = await Expense.findOne({ _id: id, userId: session.user.id });
@@ -34,7 +34,7 @@ export async function PUT(req, { params }) {
             return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
         }
 
-        const { id } = params;
+        const { id } = await params;
         const body = await req.json();
 
         await dbConnect();
@@ -65,7 +65,7 @@ export async function DELETE(req, { params }) {
             return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
         }
 
-        const { id } = params;
+        const { id } = await params;
         await dbConnect();
 
         const expense = await Expense.findOne({ _id: id, userId: session.user.id });

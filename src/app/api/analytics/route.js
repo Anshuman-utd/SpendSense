@@ -118,23 +118,92 @@ export async function GET(req) {
             }
         ];
 
-        const [totalResult, categoryResult, dailyResult, recurringResult, lastMonthResult, topMerchantsResult, lastMonthCategoryResult] = await Promise.all([
+        // Fetch lists for recurring logic
+        const [
+            totalResult,
+            categoryResult,
+            dailyResult,
+            recurringResult, // purely for the "upcoming" list, limited to 5
+            lastMonthResult,
+            topMerchantsResult,
+            lastMonthCategoryResult,
+            allRecurringExpenses, // Fetch ALL to determine active/inactive status
+            currentMonthRecurring // To check for duplication
+        ] = await Promise.all([
             Expense.aggregate(totalSpendingPipeline),
             Expense.aggregate(categorySpendingPipeline),
             Expense.aggregate(dailySpendingPipeline),
             Expense.find({ userId: userId, isRecurring: true }).sort({ date: 1 }).limit(5),
             Expense.aggregate(lastMonthTotalPipeline),
             Expense.aggregate(topMerchantsPipeline),
-            Expense.aggregate(lastMonthCategoryPipeline)
+            Expense.aggregate(lastMonthCategoryPipeline),
+            Expense.find({ userId: userId, isRecurring: true }).sort({ date: -1 }),
+            Expense.find({
+                userId: userId,
+                isRecurring: true,
+                date: { $gte: startOfMonth, $lte: endOfMonth }
+            }).select('merchant description amount category date')
         ]);
 
+        let total = totalResult[0]?.total || 0;
+        const byCategory = categoryResult.map(item => ({ name: item._id, value: item.total }));
+        const dailyTrend = dailyResult.map(item => ({ day: item._id, amount: item.total }));
+
+        // Logic to inject projected recurring expenses
+        const uniqueSubscriptions = {};
+        allRecurringExpenses.forEach(expense => {
+            const key = (expense.merchant || expense.description).toLowerCase().trim();
+            if (!uniqueSubscriptions[key]) {
+                uniqueSubscriptions[key] = expense;
+            }
+        });
+
+        const activeSubscriptions = Object.values(uniqueSubscriptions).filter(sub => sub.subscriptionStatus !== 'inactive');
+
+        // Normalize current month recurrence for lookup
+        const currentMonthKeys = new Set(
+            currentMonthRecurring.map(e => (e.merchant || e.description).toLowerCase().trim())
+        );
+
+        activeSubscriptions.forEach(sub => {
+            const key = (sub.merchant || sub.description).toLowerCase().trim();
+
+            // If active but NOT in current month's actual records, add it
+            if (!currentMonthKeys.has(key)) {
+                // Add to Total
+                total += sub.amount;
+
+                // Add to Category
+                const catIndex = byCategory.findIndex(c => c.name === sub.category);
+                if (catIndex > -1) {
+                    byCategory[catIndex].value += sub.amount;
+                } else {
+                    byCategory.push({ name: sub.category, value: sub.amount });
+                }
+
+                // Add to Daily Trend (project onto the same day of month)
+                const day = new Date(sub.date).getDate();
+                const dayIndex = dailyTrend.findIndex(d => d.day === day);
+                if (dayIndex > -1) {
+                    dailyTrend[dayIndex].amount += sub.amount;
+                } else {
+                    dailyTrend.push({ day, amount: sub.amount });
+                    // Re-sort daily trend
+                    dailyTrend.sort((a, b) => a.day - b.day);
+                }
+            }
+        });
+
+        // Ensure category sort is maintained after injection
+        byCategory.sort((a, b) => b.value - a.value);
+
         const stats = {
-            total: totalResult[0]?.total || 0,
+            total: total,
             lastMonthTotal: lastMonthResult[0]?.total || 0,
             lastMonthCount: lastMonthResult[0]?.count || 0,
-            byCategory: categoryResult.map(item => ({ name: item._id, value: item.total })),
+            byCategory: byCategory,
             lastMonthByCategory: lastMonthCategoryResult.map(item => ({ name: item._id, value: item.total })),
-            dailyTrend: dailyResult.map(item => ({ day: item._id, amount: item.total })),
+            dailyTrend: dailyTrend,
             upcomingRecurring: recurringResult,
             topMerchants: topMerchantsResult.map(item => ({
                 merchant: item._id || 'Unknown',

@@ -43,6 +43,11 @@ const ExpenseSchema = new Schema({
         type: String, // e.g., 'monthly', 'weekly'
         enum: ['daily', 'weekly', 'monthly', 'yearly', null],
         default: null,
+    },
+    subscriptionStatus: {
+        type: String,
+        enum: ['active', 'inactive'],
+        default: 'active',
     }
 }, { timestamps: true });
 

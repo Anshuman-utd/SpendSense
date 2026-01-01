@@ -20,13 +20,14 @@ import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 import AddExpenseModal from '@/components/expenses/AddExpenseModal';
 import CategoryIcon, { getCategoryStyle } from '@/components/ui/CategoryIcon';
 
+import UserMenu from '@/components/layout/UserMenu';
+
 export default function Dashboard() {
   const { data: session } = useSession();
   const [stats, setStats] = useState({ 
     total: 0, 
     lastMonthTotal: 0,
     byCategory: [], 
-    dailyTrend: [], 
     dailyTrend: [], 
     upcomingRecurring: [],
     lastMonthCount: 0,
@@ -103,11 +104,7 @@ export default function Dashboard() {
              />
            </div>
            <div className="flex items-center gap-3 pl-4 border-l border-[#27272a]">
-             {session?.user?.image ? (
-                <img src={session.user.image} alt="Profile" className="w-9 h-9 rounded-full ring-2 ring-[#27272a]" />
-             ) : (
-                <UserCircleIcon className="w-9 h-9 text-zinc-400" />
-             )}
+             <UserMenu />
            </div>
         </div>
       </header>
