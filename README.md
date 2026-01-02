@@ -193,49 +193,49 @@ Open http://localhost:3000 in your browser.
 
 
 
-##🧠 AI Architecture (High-Level)
-User uploads receipt or adds expenses
+## 🧠 AI Architecture (High-Level)
 
-Data is stored in MongoDB
+1. Users add expenses manually or upload receipt images through the dashboard.
+2. Receipt images are securely uploaded to Cloudinary for storage.
+3. OpenAI Vision API extracts structured data such as amount, category, date, and merchant from receipts.
+4. Extracted and manually entered expenses are stored in MongoDB using Mongoose models.
+5. Backend services aggregate expense data (totals, category breakdowns, trends).
+6. Aggregated summaries are sent to OpenAI GPT models to generate personalized insights, budget suggestions, and financial health summaries.
+7. AI-generated insights are cached in the database and displayed on the analytics dashboard to minimize repeated API calls and reduce costs.
 
-Aggregated expense summaries are sent to OpenAI
+---
 
-AI generates insights and recommendations
+## 🚀 Deployment
 
-Results are cached and displayed on the dashboard
+- **Frontend & Backend:** Deployed on Vercel using Next.js App Router.
+- **Database:** MongoDB Atlas (cloud-hosted NoSQL database).
+- **Media Storage:** Cloudinary for receipt and asset storage.
+- **Authentication:** Google OAuth with NextAuth.js.
+- **Environment Management:** Environment variables managed via Vercel Dashboard for production and `.env.local` for development.
 
-AI is used only for analysis and explanation, while all calculations and aggregations are handled by the backend for accuracy and cost optimization.
+---
 
-🚀 Deployment
-Frontend & Backend: Vercel
+## 📌 Key Highlights
 
-Database: MongoDB Atlas
+- AI-powered receipt scanning and expense extraction
+- Personalized spending insights and smart budget recommendations
+- Interactive financial analytics dashboard with visual charts
+- Secure authentication and user-specific data isolation
+- Optimized AI usage through controlled triggers and caching
+- Scalable full-stack architecture suitable for production deployment
 
-Media Storage: Cloudinary
+---
 
-For production:
+## 📄 License
 
-Set environment variables in Vercel Dashboard
+This project is licensed for educational and personal portfolio use.  
+You are free to use, modify, and extend the code for learning purposes.
 
-Update Google OAuth redirect URLs
+---
 
-Redeploy application
+## ✨ Author
 
-📌 Key Highlights
-Real-world finance use case
+**Anshuman Mehta**  
+Full-Stack Developer | AI Enthusiast
 
-Clean full-stack architecture
-
-Optimized AI usage with caching
-
-Secure authentication & data handling
-
-Scalable and resume-ready project
-
-📄 License
-This project is for educational and portfolio purposes.
-
-✨ Author
-Anshuman Mehta
-
-If you find this project useful, feel free to ⭐ the repository.
+If you found this project helpful, feel free to ⭐ the repository.
