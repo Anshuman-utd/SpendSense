@@ -1,36 +1,237 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://github.com/vercel/next.js/tree/canary/packages/create-next-app).
+# 💸 SpendSense – AI-Powered Personal Finance Intelligence Platform
 
-## Getting Started
+SpendSense is a **production-ready, full-stack AI-powered expense tracking and financial analytics platform** designed to help users manage their spending, understand financial habits, and make smarter budgeting decisions through data-driven insights and visual analytics.
 
-First, run the development server:
+---
+
+## 🚀 Features
+
+### 🧠 AI-Powered Features
+- **Smart Receipt Scanner**
+  - Upload receipt images and automatically extract amount, category, date, and merchant details using AI Vision APIs.
+- **AI Spending Insights**
+  - Generate weekly/monthly summaries explaining spending patterns, trends, and anomalies.
+- **Smart Budget Suggestions**
+  - Personalized budget recommendations based on income and historical spending behavior.
+- **Financial Health Score**
+  - AI-assisted scoring system to evaluate overall financial wellness with improvement tips.
+
+---
+
+### 💼 Core Expense Management
+- Add, edit, and delete expenses manually
+- Categorize expenses (Food, Transport, Entertainment, etc.)
+- Split expenses with friends
+- Multi-currency support with automatic conversion
+
+---
+
+### 📊 Visual Analytics Dashboard
+- Monthly and yearly spending trends
+- Category-wise pie charts
+- Budget vs actual spending comparison
+- Cash flow analysis (Income vs Expenses)
+
+---
+
+### 🔁 Recurring Expenses & Subscriptions
+- Track recurring expenses (rent, subscriptions, utilities)
+- Subscription reminders before due dates
+- Identify low-value or unused subscriptions
+
+---
+
+### 📤 Reports & Exports
+- Export expense data as **PDF** or **CSV**
+- Download monthly financial statements
+
+---
+
+### 🔐 Authentication & Security
+- Secure authentication using **NextAuth.js**
+- Google OAuth integration
+- Protected API routes and user-specific data isolation
+
+---
+
+## 🏗️ Tech Stack
+
+### Frontend
+- **Next.js 14 (App Router)**
+- React
+- Tailwind CSS
+- Recharts.js
+- React Hook Form
+- Zustand
+- date-fns
+
+### Backend
+- Next.js API Routes
+- MongoDB
+- Mongoose (ODM)
+
+### AI & Integrations
+- OpenAI GPT-4 (Insights & Budgeting)
+- OpenAI Vision API (Receipt Scanning)
+- Cloudinary (Receipt Image Storage)
+
+### Authentication
+- NextAuth.js
+- Google OAuth
+- MongoDB Adapter
+
+---
+
+## 🗂️ Project Structure
+
+src/
+│   ├── app/
+│   │   ├── (auth)/
+│   │   │   └── auth/
+│   │   ├── (dashboard)/
+│   │   │   ├── ai-insights/
+│   │   │   ├── analytics/
+│   │   │   ├── budget/
+│   │   │   ├── dashboard/
+│   │   │   ├── expenses/
+│   │   │   ├── recurring/
+│   │   │   ├── scan-receipt/
+│   │   │   ├── settings/
+│   │   │   └── layout.jsx
+│   │   ├── api/
+│   │   │   ├── ai/
+│   │   │   ├── analytics/
+│   │   │   ├── auth/
+│   │   │   ├── budgets/
+│   │   │   ├── expenses/
+│   │   │   ├── upload/
+│   │   │   └── user/
+│   │   ├── favicon.ico
+│   │   ├── globals.css
+│   │   ├── layout.js
+│   │   └── page.jsx
+│   ├── components/
+│   │   ├── budget/
+│   │   │   ├── CategoryBudgetCard.jsx
+│   │   │   └── EditBudgetModal.jsx
+│   │   ├── dashboard/
+│   │   │   ├── CategoryPieChart.jsx
+│   │   │   └── SpendingTrendChart.jsx
+│   │   ├── expenses/
+│   │   │   ├── AddExpenseModal.jsx
+│   │   │   └── ExpenseForm.jsx
+│   │   ├── layout/
+│   │   │   ├── Footer.jsx
+│   │   │   ├── Navbar.jsx
+│   │   │   ├── Sidebar.jsx
+│   │   │   └── UserMenu.jsx
+│   │   ├── providers/
+│   │   │   └── AuthProvider.jsx
+│   │   └── ui/
+│   │       ├── CategoryIcon.jsx
+│   │       └── MiniCalendar.jsx
+│   ├── lib/
+│   │   ├── cloudinary.js
+│   │   ├── db.js
+│   │   └── mongodb.js
+│   └── models/
+│       ├── AIInsight.js
+│       ├── Budget.js
+│       ├── Category.js
+│       ├── Expense.js
+│       └── User.js
+
+---
+
+## ⚙️ Environment Variables
+
+Create a `.env.local` file and add:
+
+App
+NEXTAUTH_URL=http://localhost:3000
+NEXTAUTH_SECRET=your_nextauth_secret
+
+Google OAuth
+GOOGLE_CLIENT_ID=your_google_client_id
+GOOGLE_CLIENT_SECRET=your_google_client_secret
+
+Database
+MONGODB_URI=mongodb+srv://user:password@cluster.mongodb.net/spensense
+
+OpenAI
+OPENAI_API_KEY=your_openai_api_key
+
+Cloudinary
+CLOUDINARY_CLOUD_NAME=your_cloud_name
+CLOUDINARY_API_KEY=your_api_key
+CLOUDINARY_API_SECRET=your_api_secret
+
+yaml
+Copy code
+
+⚠️ Do not wrap values in quotes and never commit this file.
+
+---
+
+## 🛠️ Installation & Setup
 
 ```bash
+# Clone repository
+git clone https://github.com/your-username/spensense.git
+
+# Navigate into project
+cd spensense
+
+# Install dependencies
+npm install
+
+# Start development server
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+Open http://localhost:3000 in your browser.
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+🧠 AI Architecture (High-Level)
+User uploads receipt or adds expenses
 
-You can start editing the page by modifying `app/page.js`. The page auto-updates as you edit the file.
+Data is stored in MongoDB
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Aggregated expense summaries are sent to OpenAI
 
-## Learn More
+AI generates insights and recommendations
 
-To learn more about Next.js, take a look at the following resources:
+Results are cached and displayed on the dashboard
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+AI is used only for analysis and explanation, while all calculations and aggregations are handled by the backend for accuracy and cost optimization.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+🚀 Deployment
+Frontend & Backend: Vercel
 
-## Deploy on Vercel
+Database: MongoDB Atlas
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+Media Storage: Cloudinary
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+For production:
+
+Set environment variables in Vercel Dashboard
+
+Update Google OAuth redirect URLs
+
+Redeploy application
+
+📌 Key Highlights
+Real-world finance use case
+
+Clean full-stack architecture
+
+Optimized AI usage with caching
+
+Secure authentication & data handling
+
+Scalable and resume-ready project
+
+📄 License
+This project is for educational and portfolio purposes.
+
+✨ Author
+Anshuman Mehta
+
+If you find this project useful, feel free to ⭐ the repository.
