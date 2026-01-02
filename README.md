@@ -148,6 +148,8 @@ src/
 
 ## ⚙️ Environment Variables
 
+```bash
+
 Create a `.env.local` file and add:
 
 App
@@ -173,6 +175,8 @@ yaml
 Copy code
 
 ⚠️ Do not wrap values in quotes and never commit this file.
+
+``` 
 
 ---
 
