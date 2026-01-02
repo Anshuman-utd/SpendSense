@@ -176,7 +176,7 @@ Copy code
 
 ## 🛠️ Installation & Setup
 
-
+```bash
 # Clone repository
 git clone https://github.com/your-username/spensense.git
 
@@ -189,11 +189,10 @@ npm install
 # Start development server
 npm run dev
 Open http://localhost:3000 in your browser.
+```
 
 
 ## 🧠 AI Architecture (High-Level)
-
-
 
 - Users add expenses manually or upload receipt images through the dashboard.
 - Receipt images are securely uploaded to Cloudinary for storage.
