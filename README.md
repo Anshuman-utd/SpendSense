@@ -193,6 +193,8 @@ Open http://localhost:3000 in your browser.
 
 ## 🧠 AI Architecture (High-Level)
 
+```bash
+
 - Users add expenses manually or upload receipt images through the dashboard.
 - Receipt images are securely uploaded to Cloudinary for storage.
 - OpenAI Vision API extracts structured data such as amount, category, date, and merchant from receipts.
