@@ -85,61 +85,62 @@ SpendSense is a **production-ready, full-stack AI-powered expense tracking and f
 ## 🗂️ Project Structure
 
 src/
-│   ├── app/
-│   │   ├── (auth)/
-│   │   │   └── auth/
-│   │   ├── (dashboard)/
-│   │   │   ├── ai-insights/
-│   │   │   ├── analytics/
-│   │   │   ├── budget/
-│   │   │   ├── dashboard/
-│   │   │   ├── expenses/
-│   │   │   ├── recurring/
-│   │   │   ├── scan-receipt/
-│   │   │   ├── settings/
-│   │   │   └── layout.jsx
-│   │   ├── api/
-│   │   │   ├── ai/
-│   │   │   ├── analytics/
-│   │   │   ├── auth/
-│   │   │   ├── budgets/
-│   │   │   ├── expenses/
-│   │   │   ├── upload/
-│   │   │   └── user/
-│   │   ├── favicon.ico
-│   │   ├── globals.css
-│   │   ├── layout.js
-│   │   └── page.jsx
-│   ├── components/
+├── app/
+│   ├── (auth)/
+│   │   └── auth/
+│   ├── (dashboard)/
+│   │   ├── ai-insights/
+│   │   ├── analytics/
 │   │   ├── budget/
-│   │   │   ├── CategoryBudgetCard.jsx
-│   │   │   └── EditBudgetModal.jsx
 │   │   ├── dashboard/
-│   │   │   ├── CategoryPieChart.jsx
-│   │   │   └── SpendingTrendChart.jsx
 │   │   ├── expenses/
-│   │   │   ├── AddExpenseModal.jsx
-│   │   │   └── ExpenseForm.jsx
-│   │   ├── layout/
-│   │   │   ├── Footer.jsx
-│   │   │   ├── Navbar.jsx
-│   │   │   ├── Sidebar.jsx
-│   │   │   └── UserMenu.jsx
-│   │   ├── providers/
-│   │   │   └── AuthProvider.jsx
-│   │   └── ui/
-│   │       ├── CategoryIcon.jsx
-│   │       └── MiniCalendar.jsx
-│   ├── lib/
-│   │   ├── cloudinary.js
-│   │   ├── db.js
-│   │   └── mongodb.js
-│   └── models/
-│       ├── AIInsight.js
-│       ├── Budget.js
-│       ├── Category.js
-│       ├── Expense.js
-│       └── User.js
+│   │   ├── recurring/
+│   │   ├── scan-receipt/
+│   │   ├── settings/
+│   │   └── layout.jsx
+│   ├── api/
+│   │   ├── ai/
+│   │   ├── analytics/
+│   │   ├── auth/
+│   │   ├── budgets/
+│   │   ├── expenses/
+│   │   ├── upload/
+│   │   └── user/
+│   ├── favicon.ico
+│   ├── globals.css
+│   ├── layout.js
+│   └── page.jsx
+├── components/
+│   ├── budget/
+│   │   ├── CategoryBudgetCard.jsx
+│   │   └── EditBudgetModal.jsx
+│   ├── dashboard/
+│   │   ├── CategoryPieChart.jsx
+│   │   └── SpendingTrendChart.jsx
+│   ├── expenses/
+│   │   ├── AddExpenseModal.jsx
+│   │   └── ExpenseForm.jsx
+│   ├── layout/
+│   │   ├── Footer.jsx
+│   │   ├── Navbar.jsx
+│   │   ├── Sidebar.jsx
+│   │   └── UserMenu.jsx
+│   ├── providers/
+│   │   └── AuthProvider.jsx
+│   └── ui/
+│       ├── CategoryIcon.jsx
+│       └── MiniCalendar.jsx
+├── lib/
+│   ├── cloudinary.js
+│   ├── db.js
+│   └── mongodb.js
+└── models/
+    ├── AIInsight.js
+    ├── Budget.js
+    ├── Category.js
+    ├── Expense.js
+    └── User.js
+
 
 ---
 
@@ -189,7 +190,10 @@ npm install
 npm run dev
 Open http://localhost:3000 in your browser.
 
-🧠 AI Architecture (High-Level)
+
+
+
+##🧠 AI Architecture (High-Level)
 User uploads receipt or adds expenses
 
 Data is stored in MongoDB
