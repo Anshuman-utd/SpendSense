@@ -84,6 +84,8 @@ SpendSense is a **production-ready, full-stack AI-powered expense tracking and f
 
 ## 🗂️ Project Structure
 
+```bash
+
 src/
 ├── app/
 │   ├── (auth)/
@@ -141,7 +143,7 @@ src/
     ├── Expense.js
     └── User.js
 
-
+```
 ---
 
 ## ⚙️ Environment Variables
