@@ -191,51 +191,50 @@ npm run dev
 Open http://localhost:3000 in your browser.
 
 
----
-
 ## 🧠 AI Architecture (High-Level)
 
-1. Users add expenses manually or upload receipt images through the dashboard.
-2. Receipt images are securely uploaded to Cloudinary for storage.
-3. OpenAI Vision API extracts structured data such as amount, category, date, and merchant from receipts.
-4. Extracted and manually entered expenses are stored in MongoDB using Mongoose models.
-5. Backend services aggregate expense data (totals, category breakdowns, trends).
-6. Aggregated summaries are sent to OpenAI GPT models to generate personalized insights, budget suggestions, and financial health summaries.
-7. AI-generated insights are cached in the database and displayed on the analytics dashboard to minimize repeated API calls and reduce costs.
+- Users add expenses manually or upload receipt images through the dashboard.
+- Receipt images are securely uploaded to Cloudinary for storage.
+- OpenAI Vision API extracts structured data such as amount, category, date, and merchant from receipts.
+- Extracted and manually entered expenses are stored in MongoDB using Mongoose models.
+- Backend services aggregate expense data including totals, category breakdowns, and spending trends.
+- Aggregated summaries are sent to OpenAI GPT models to generate personalized insights, budget recommendations, and financial health summaries.
+- AI-generated insights are cached in the database to minimize repeated API calls and optimize usage costs.
+- Insights are displayed on the analytics dashboard for user-friendly interpretation.
 
 ---
 
 ## 🚀 Deployment
 
 - **Frontend & Backend:** Deployed on Vercel using Next.js App Router.
-- **Database:** MongoDB Atlas (cloud-hosted NoSQL database).
-- **Media Storage:** Cloudinary for receipt and asset storage.
-- **Authentication:** Google OAuth with NextAuth.js.
-- **Environment Management:** Environment variables managed via Vercel Dashboard for production and `.env.local` for development.
+- **Database:** MongoDB Atlas for cloud-hosted data storage.
+- **Media Storage:** Cloudinary for receipt image storage.
+- **Authentication:** Google OAuth via NextAuth.js.
+- **Environment Variables:** Managed through `.env.local` for development and Vercel Dashboard for production.
 
 ---
 
 ## 📌 Key Highlights
 
-- AI-powered receipt scanning and expense extraction
+- AI-powered receipt scanning and automated expense extraction
 - Personalized spending insights and smart budget recommendations
-- Interactive financial analytics dashboard with visual charts
-- Secure authentication and user-specific data isolation
+- Interactive dashboards with charts and financial analytics
+- Secure authentication with user-specific data isolation
 - Optimized AI usage through controlled triggers and caching
-- Scalable full-stack architecture suitable for production deployment
+- Scalable and production-ready full-stack architecture
 
 ---
 
 ## 📄 License
 
-This project is licensed for educational and personal portfolio use.  
-You are free to use, modify, and extend the code for learning purposes.
+This project is developed for educational and personal portfolio purposes.  
+You are free to use, modify, and extend the codebase for learning and non-commercial use.
 
 ---
 
 ## ✨ Author
 
 **Anshuman Mehta**  
-Full-Stack Developer | AI Enthusiast
+Full-Stack Developer | AI Enthusiast  
 
-If you found this project helpful, feel free to ⭐ the repository.
+If you found this project useful, consider starring ⭐ the repository.
