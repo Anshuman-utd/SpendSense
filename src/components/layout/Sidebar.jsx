@@ -25,6 +25,7 @@ const navigation = [
   { name: 'Budget', href: '/budget', icon: WalletIcon },
   { name: 'Recurring', href: '/recurring', icon: ArrowPathIcon },
   { name: 'Settings', href: '/settings', icon: Cog6ToothIcon },
+  
 ];
 
 export default function Sidebar() {

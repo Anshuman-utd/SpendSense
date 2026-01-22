@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
-import OpenAI from 'openai';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 import { authOptions } from '../../auth/[...nextauth]/route';
 import Expense from '@/models/Expense';
 import AIInsight from '@/models/AIInsight';
@@ -56,10 +56,9 @@ export async function POST(req) {
             transactionCount
         };
 
-        // 3. Send to OpenAI
-        const openai = new OpenAI({
-            apiKey: process.env.OPENAI_API_KEY,
-        });
+        // 3. Send to Google Gemini
+        const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
+        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
         const prompt = `
       You are a personal finance advisor.
@@ -80,19 +79,17 @@ export async function POST(req) {
       - summary (string): A short 1-2 sentence overview of their spending.
       - problems (array of strings): 1-2 identified issues or observations.
       - tips (array of strings): 3 actionable tips.
+      
+      IMPORTANT: Return ONLY the JSON object. Do not wrap it in markdown code blocks.
     `;
 
-        const aiResponse = await openai.chat.completions.create({
-            model: "gpt-4o",
-            messages: [
-                { role: "system", content: "You are a helpful financial assistant." },
-                { role: "user", content: prompt }
-            ],
-            response_format: { type: "json_object" },
-        });
+        const result = await model.generateContent(prompt);
+        const response = await result.response;
+        const text = response.text();
 
-        const content = aiResponse.choices[0].message.content;
-        const aiData = JSON.parse(content);
+        // Clean up markdown if present
+        const cleanContent = text.replace(/```json/g, '').replace(/```/g, '').trim();
+        const aiData = JSON.parse(cleanContent);
 
         // 4. Save to DB
         const newInsight = await AIInsight.create({

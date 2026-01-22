@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@auth/mongodb-adapter": "^3.11.1",
+    "@google/generative-ai": "^0.24.1",
     "@headlessui/react": "^2.2.9",
     "@heroicons/react": "^2.2.0",
     "axios": "^1.13.2",
@@ -23,7 +24,6 @@
     "mongoose": "^9.0.2",
     "next": "16.1.1",
     "next-auth": "^4.24.13",
-    "openai": "^6.15.0",
     "papaparse": "^5.5.3",
     "react": "19.2.3",
     "react-dom": "19.2.3",

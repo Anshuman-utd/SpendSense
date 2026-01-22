@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
-import OpenAI from 'openai';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 import { authOptions } from '../../auth/[...nextauth]/route';
 
 export async function POST(req) {
@@ -10,14 +10,23 @@ export async function POST(req) {
             return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
         }
 
-        const openai = new OpenAI({
-            apiKey: process.env.OPENAI_API_KEY,
-        });
+        const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
+        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
         const { imageUrl } = await req.json();
         if (!imageUrl) {
             return NextResponse.json({ error: 'Image URL is required' }, { status: 400 });
         }
+
+        // Fetch image and convert to base64
+        const imageResp = await fetch(imageUrl);
+        if (!imageResp.ok) {
+            throw new Error(`Failed to fetch image: ${imageResp.statusText}`);
+        }
+        const arrayBuffer = await imageResp.arrayBuffer();
+        const base64Image = Buffer.from(arrayBuffer).toString('base64');
+        const mimeType = imageResp.headers.get('content-type') || 'image/jpeg';
+
 
         const prompt = `
       Analyze this receipt image and extract the following information in strict JSON format:
@@ -30,29 +39,21 @@ export async function POST(req) {
       Do not include markdown formatting (like '''json). Just the raw JSON object.
     `;
 
-        const response = await openai.chat.completions.create({
-            model: "gpt-4o",
-            messages: [
-                {
-                    role: "user",
-                    content: [
-                        { type: "text", text: prompt },
-                        {
-                            type: "image_url",
-                            image_url: {
-                                "url": imageUrl,
-                            },
-                        },
-                    ],
-                },
-            ],
-            max_tokens: 300,
-        });
+        const result = await model.generateContent([
+            prompt,
+            {
+                inlineData: {
+                    data: base64Image,
+                    mimeType: mimeType
+                }
+            }
+        ]);
 
-        const content = response.choices[0].message.content;
+        const response = await result.response;
+        const text = response.text();
 
-        // Clean up potential markdown code blocks if GPT adds them
-        const cleanContent = content.replace(/```json/g, '').replace(/```/g, '').trim();
+        // Clean up potential markdown code blocks
+        const cleanContent = text.replace(/```json/g, '').replace(/```/g, '').trim();
         const data = JSON.parse(cleanContent);
 
         if (data.error) {

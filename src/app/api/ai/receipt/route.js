@@ -1,16 +1,13 @@
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
-import OpenAI from 'openai';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 import cloudinary from '@/lib/cloudinary';
 import { authOptions } from '../../auth/[...nextauth]/route';
 import Expense from '@/models/Expense';
 import connectDB from '@/lib/db';
 
 // Helper to convert file to buffer for Cloudinary
-async function uploadToCloudinary(file) {
-    const arrayBuffer = await file.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
-
+async function uploadToCloudinary(buffer) {
     return new Promise((resolve, reject) => {
         cloudinary.uploader.upload_stream(
             { folder: 'spendsense/receipts' },
@@ -41,14 +38,19 @@ export async function POST(req) {
             return NextResponse.json({ error: 'No file uploaded' }, { status: 400 });
         }
 
+        // Prepare buffer
+        const arrayBuffer = await file.arrayBuffer();
+        const buffer = Buffer.from(arrayBuffer);
+        const base64Image = buffer.toString('base64');
+        const mimeType = file.type || 'image/jpeg';
+
         // 1. Upload to Cloudinary
-        const uploadResult = await uploadToCloudinary(file);
+        const uploadResult = await uploadToCloudinary(buffer);
         const imageUrl = uploadResult.secure_url;
 
-        // 2. Send to OpenAI Vision
-        const openai = new OpenAI({
-            apiKey: process.env.OPENAI_API_KEY,
-        });
+        // 2. Send to Google Gemini
+        const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
+        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
         const prompt = `
       Extract expense details from this receipt.
@@ -63,26 +65,20 @@ export async function POST(req) {
       If it's not a receipt, return { "error": "not_a_receipt" }.
     `;
 
-        const aiResponse = await openai.chat.completions.create({
-            model: "gpt-4o",
-            messages: [
-                {
-                    role: "user",
-                    content: [
-                        { type: "text", text: prompt },
-                        {
-                            type: "image_url",
-                            image_url: { url: imageUrl },
-                        },
-                    ],
-                },
-            ],
-            response_format: { type: "json_object" },
-            max_tokens: 500,
-        });
+        const result = await model.generateContent([
+            prompt,
+            {
+                inlineData: {
+                    data: base64Image,
+                    mimeType: mimeType
+                }
+            }
+        ]);
 
-        const content = aiResponse.choices[0].message.content;
-        const extractedData = JSON.parse(content);
+        const response = await result.response;
+        const text = response.text();
+        const cleanContent = text.replace(/```json/g, '').replace(/```/g, '').trim();
+        const extractedData = JSON.parse(cleanContent);
 
         if (extractedData.error) {
             return NextResponse.json({ error: 'Could not process receipt. Is this a valid receipt?' }, { status: 400 });
