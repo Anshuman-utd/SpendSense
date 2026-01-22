@@ -57,8 +57,11 @@ export async function POST(req) {
         };
 
         // 3. Send to Google Gemini
+        if (!process.env.GOOGLE_API_KEY) {
+            throw new Error('GOOGLE_API_KEY is not defined in environment variables');
+        }
         const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
-        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+        const model = genAI.getGenerativeModel({ model: "gemini-flash-latest" });
 
         const prompt = `
       You are a personal finance advisor.
@@ -102,6 +105,6 @@ export async function POST(req) {
 
     } catch (error) {
         console.error('Generate Insights Error:', error);
-        return NextResponse.json({ success: false, error: 'Failed to generate insights' }, { status: 500 });
+        return NextResponse.json({ success: false, error: error.message || 'Failed to generate insights' }, { status: 500 });
     }
 }

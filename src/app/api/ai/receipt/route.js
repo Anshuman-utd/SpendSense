@@ -50,7 +50,7 @@ export async function POST(req) {
 
         // 2. Send to Google Gemini
         const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
-        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+        const model = genAI.getGenerativeModel({ model: "gemini-flash-latest" });
 
         const prompt = `
       Extract expense details from this receipt.
