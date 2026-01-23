@@ -71,8 +71,8 @@ SpendSense is a **production-ready, full-stack AI-powered expense tracking and f
 - Mongoose (ODM)
 
 ### AI & Integrations
-- OpenAI GPT-4 (Insights & Budgeting)
-- OpenAI Vision API (Receipt Scanning)
+- Google Gemini (Insights & Budgeting)
+- Google Gemini Vision API (Receipt Scanning)
 - Cloudinary (Receipt Image Storage)
 
 ### Authentication
@@ -163,8 +163,8 @@ GOOGLE_CLIENT_SECRET=your_google_client_secret
 Database
 MONGODB_URI=mongodb+srv://user:password@cluster.mongodb.net/spensense
 
-OpenAI
-OPENAI_API_KEY=your_openai_api_key
+Google Gemini
+GOOGLE_API_KEY=your_google_gemini_api_key
 
 Cloudinary
 CLOUDINARY_CLOUD_NAME=your_cloud_name
@@ -202,10 +202,10 @@ Open http://localhost:3000 in your browser.
 
 - Users add expenses manually or upload receipt images through the dashboard.
 - Receipt images are securely uploaded to Cloudinary for storage.
-- OpenAI Vision API extracts structured data such as amount, category, date, and merchant from receipts.
+- Google Gemini API extracts structured data such as amount, category, date, and merchant from receipts.
 - Extracted and manually entered expenses are stored in MongoDB using Mongoose models.
 - Backend services aggregate expense data including totals, category breakdowns, and spending trends.
-- Aggregated summaries are sent to OpenAI GPT models to generate personalized insights, budget recommendations, and financial health summaries.
+- Aggregated summaries are sent to Google Gemini models to generate personalized insights, budget recommendations, and financial health summaries.
 - AI-generated insights are cached in the database to minimize repeated API calls and optimize usage costs.
 - Insights are displayed on the analytics dashboard for user-friendly interpretation.
 
