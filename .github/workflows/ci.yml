@@ -1,0 +1,39 @@
+name: SpendSense CI
+
+on:
+  push:
+    branches: [ main, master, feature/** ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  test-and-build:
+    name: Unit & Integration Tests and Next.js Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run test suite
+        run: npm test
+
+      - name: Verify production build
+        run: npm run build
+        env:
+          NODE_ENV: production
+          NEXT_TELEMETRY_DISABLED: 1
+          MONGODB_URI: mongodb://localhost:27017/spendsense_ci
+          NEXTAUTH_SECRET: ci_secret_key_32_characters_long_min_12345
+          NEXTAUTH_URL: http://localhost:3000
+          GROQ_API_KEY: gsk_mock_ci_key_for_build_testing
+          REDIS_URL: redis://localhost:6379
