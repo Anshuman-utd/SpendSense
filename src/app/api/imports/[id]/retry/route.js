@@ -3,8 +3,9 @@ import { getServerSession } from 'next-auth';
 import mongoose from 'mongoose';
 import dbConnect from '@/lib/db';
 import ImportJob from '@/models/ImportJob';
-import { processImportJob } from '@/lib/imports/importService';
-import { addImportJob } from '@/lib/queue';
+import ImportedTransaction from '@/models/ImportedTransaction';
+import { processImportJob, confirmImport } from '@/lib/imports/importService';
+import { addImportJob, addConfirmJob } from '@/lib/queue';
 import { authOptions } from '../../../auth/[...nextauth]/route';
 
 export async function POST(req, { params }) {
@@ -26,30 +27,73 @@ export async function POST(req, { params }) {
             return NextResponse.json({ success: false, error: 'Import job not found' }, { status: 404 });
         }
 
-        if (job.status !== 'failed' && job.status !== 'partially_completed') {
+        if (job.status !== 'failed' && job.status !== 'partially_completed' && job.status !== 'importing') {
             return NextResponse.json({
                 success: false,
-                error: `Only failed or partially completed jobs can be retried (current status: ${job.status})`
+                error: `Only failed, partially completed, or stuck jobs can be retried (current status: ${job.status})`
             }, { status: 400 });
         }
-
-        job.status = 'processing';
-        job.progress = { stage: 'Retrying', percent: 5, message: 'Retrying statement processing...' };
-        job.errorSummary = [];
-        await job.save();
 
         const url = new URL(req.url);
         const isSyncRequested = url.searchParams.get('sync') === 'true' || 
                                 process.env.SYNC_PROCESSING === 'true' || 
                                 process.env.ENABLE_SYNC_IMPORT === 'true';
 
-        const queued = await addImportJob(job._id.toString());
-        if (!queued) {
+        // Check if staged transactions already exist (Requirement #13)
+        const stagedTxnsCount = await ImportedTransaction.countDocuments({ importJobId: job._id });
+        const hasStagedTransactions = stagedTxnsCount > 0;
+
+        if (hasStagedTransactions) {
+            // Staged transactions already exist: retry confirmation to preserve user selections & edits
+            const claimed = await ImportJob.findOneAndUpdate(
+                { _id: id, status: { $in: ['failed', 'partially_completed', 'importing'] } },
+                {
+                    $set: {
+                        status: 'confirmation_queued',
+                        progress: { stage: 'Confirmation queued', percent: 5, message: 'Retrying confirmation of staged transactions...' },
+                        errorSummary: []
+                    }
+                },
+                { new: true }
+            );
+
+            if (!claimed) {
+                return NextResponse.json({ success: false, error: 'Job is already being processed.' }, { status: 409 });
+            }
+
+            const queued = await addConfirmJob(job._id.toString());
+            if (queued) {
+                return NextResponse.json({ success: true, message: 'Confirmation retry queued', data: claimed });
+            }
+
             if (isSyncRequested) {
-                console.log(`[Retry API] Sync mode active. Processing retry for ${job._id} synchronously...`);
+                const result = await confirmImport(job._id.toString());
+                return NextResponse.json({ success: true, message: 'Confirmation completed synchronously', data: result, mode: 'synchronous' });
+            } else {
+                await ImportJob.findByIdAndUpdate(job._id, {
+                    status: 'ready_for_review',
+                    'progress.stage': 'Ready for review',
+                    'progress.percent': 100,
+                    'progress.message': 'Queue unavailable. Recovered to ready for review.'
+                });
+                return NextResponse.json({ success: false, error: 'Background processing queue is currently unavailable.' }, { status: 503 });
+            }
+        } else {
+            // No staged transactions: failure occurred during parsing. Retry statement ingestion pipeline.
+            job.status = 'processing';
+            job.progress = { stage: 'Retrying', percent: 5, message: 'Retrying statement parsing...' };
+            job.errorSummary = [];
+            await job.save();
+
+            const queued = await addImportJob(job._id.toString());
+            if (queued) {
+                return NextResponse.json({ success: true, message: 'Parsing retry queued', data: job });
+            }
+
+            if (isSyncRequested) {
                 await processImportJob(job._id.toString());
                 const updatedJob = await ImportJob.findById(job._id);
-                return NextResponse.json({ success: true, message: 'Retry completed synchronously', data: updatedJob, mode: 'synchronous' });
+                return NextResponse.json({ success: true, message: 'Parsing retry completed synchronously', data: updatedJob, mode: 'synchronous' });
             } else {
                 job.status = 'failed';
                 job.progress = {
@@ -65,8 +109,6 @@ export async function POST(req, { params }) {
                 }, { status: 503 });
             }
         }
-
-        return NextResponse.json({ success: true, message: 'Retry initiated', data: job });
 
     } catch (error) {
         console.error('Retry import error:', error);
