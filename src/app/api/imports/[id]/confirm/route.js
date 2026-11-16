@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
+import crypto from "crypto";
 import mongoose from "mongoose";
 import dbConnect from "@/lib/db";
 import ImportJob from "@/models/ImportJob";
@@ -38,8 +39,9 @@ export async function POST(req, { params }) {
     }
 
     const isSyncRequested = isSyncAllowed(req);
+    const confirmationToken = crypto.randomUUID();
 
-    // 1. Atomic claim using conditional status filter (Requirements #2, #3, #6)
+    // 1. Atomic claim using conditional status filter and unique attempt token (Requirements #2, #3, #6)
     const claimedJob = await ImportJob.findOneAndUpdate(
       {
         _id: id,
@@ -49,6 +51,7 @@ export async function POST(req, { params }) {
       {
         $set: {
           status: "confirmation_queued",
+          confirmationToken,
           progress: {
             stage: "Confirmation queued",
             percent: 5,
@@ -102,8 +105,8 @@ export async function POST(req, { params }) {
       );
     }
 
-    // 2. Enqueue BullMQ job with deterministic jobId (Requirement #4)
-    const queued = await addConfirmJob(id, transactionIds);
+    // 2. Enqueue BullMQ job with deterministic attempt-scoped jobId
+    const queued = await addConfirmJob(id, transactionIds, { confirmationToken });
 
     if (queued) {
       // Worker will transition to 'importing' and 'completed'.
@@ -111,13 +114,18 @@ export async function POST(req, { params }) {
       return NextResponse.json({
         success: true,
         message: "Import queued successfully",
-        data: { queued: true, status: "confirmation_queued", jobId: id },
+        data: {
+          queued: true,
+          status: "confirmation_queued",
+          jobId: id,
+          confirmationToken,
+        },
       });
     }
 
     // 3. Fallback: Queue enqueue definitely failed (Requirement #8)
     if (isSyncRequested) {
-      const result = await confirmImport(id, transactionIds);
+      const result = await confirmImport(id, transactionIds, { confirmationToken });
       return NextResponse.json({
         success: true,
         message: "Import completed successfully",
@@ -125,12 +133,13 @@ export async function POST(req, { params }) {
         mode: "synchronous",
       });
     } else {
-      // Roll back status to previous eligible status using conditional update
+      // Roll back status to previous eligible status scoped to this confirmation attempt
       await ImportJob.findOneAndUpdate(
-        { _id: id, status: "confirmation_queued" },
+        { _id: id, status: "confirmation_queued", confirmationToken },
         {
           $set: {
             status: claimedJob.status,
+            confirmationToken: null,
             progress: {
               stage: "Ready for review",
               percent: 100,

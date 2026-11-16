@@ -249,7 +249,7 @@ export async function processImportJob(
 export async function confirmImport(
   importJobId,
   selectedTransactionIds = null,
-  { isWorker = false } = {},
+  { isWorker = false, confirmationToken = null } = {},
 ) {
   await dbConnect();
 
@@ -260,13 +260,20 @@ export async function confirmImport(
     ? ['confirmation_queued', 'importing', 'partially_completed']
     : ['confirmation_queued', 'importing', 'ready_for_review', 'partially_completed'];
 
-  const job = await ImportJob.findOneAndUpdate(
-    {
-      _id: importJobId,
-      status: {
-        $in: claimableStatuses,
-      },
+  const claimFilter = {
+    _id: importJobId,
+    status: {
+      $in: claimableStatuses,
     },
+  };
+
+  // If worker is running a specific confirmation attempt, scope claim to that attempt's token
+  if (isWorker && confirmationToken) {
+    claimFilter.confirmationToken = confirmationToken;
+  }
+
+  const job = await ImportJob.findOneAndUpdate(
+    claimFilter,
     {
       $set: {
         status: 'importing',
@@ -289,6 +296,24 @@ export async function confirmImport(
         skippedCount: 0,
         failedCount: 0,
         alreadyCompleted: true,
+      };
+    }
+    // Concurrency race guard: If an old/delayed confirmation attempt arrives but the DB was claimed
+    // by a newer confirmation attempt (different token), ignore the old attempt!
+    if (
+      isWorker &&
+      confirmationToken &&
+      existing.confirmationToken &&
+      existing.confirmationToken !== confirmationToken
+    ) {
+      console.warn(
+        `[ImportService] Reconciliation: ImportJob ${importJobId} confirmation token mismatch (job: "${confirmationToken}", db: "${existing.confirmationToken}"). Skipping outdated confirmation attempt.`,
+      );
+      return {
+        reconciled: true,
+        skipped: true,
+        reason: 'stale_attempt_token',
+        status: existing.status,
       };
     }
     // Reconciliation guard: If worker picks up a late Redis job where MongoDB was

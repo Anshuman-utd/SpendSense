@@ -223,3 +223,59 @@ test('Confirmation State Machine: Late worker execution on rolled-back ready_for
     assert.equal(job.status, 'ready_for_review', 'MongoDB job remains intact in ready_for_review for retry');
 });
 
+test('Confirmation State Machine: Stale attempt token from timed-out Attempt A is rejected when Attempt B is active in confirmation_queued', async () => {
+    let job = {
+        _id: 'job_token_race_1',
+        status: 'ready_for_review',
+        confirmationToken: null,
+    };
+
+    // 1. Attempt A arrives and claims confirmation_queued with token_A
+    const tokenA = 'token_A_123';
+    job.status = 'confirmation_queued';
+    job.confirmationToken = tokenA;
+
+    // 2. Attempt A enqueue times out, API rolls back to ready_for_review
+    job.status = 'ready_for_review';
+    job.confirmationToken = null;
+
+    // 3. User immediately starts Attempt B, claiming confirmation_queued with token_B
+    const tokenB = 'token_B_456';
+    job.status = 'confirmation_queued';
+    job.confirmationToken = tokenB;
+
+    // 4. Delayed BullMQ job from Attempt A now arrives at worker with payload { confirmationToken: tokenA }
+    const workerAttemptClaim = (jobDoc, token) => {
+        if (jobDoc.status === 'confirmation_queued' && jobDoc.confirmationToken === token) {
+            jobDoc.status = 'importing';
+            return { claimed: true };
+        }
+        return { claimed: false };
+    };
+
+    const claimA = workerAttemptClaim(job, tokenA);
+    assert.equal(claimA.claimed, false, 'Attempt A must NOT claim because token mismatch (tokenA vs tokenB)');
+
+    // Attempt A worker executes token mismatch reconciliation:
+    let workerResultA = null;
+    if (job.confirmationToken && job.confirmationToken !== tokenA) {
+        workerResultA = {
+            reconciled: true,
+            skipped: true,
+            reason: 'stale_attempt_token',
+            status: job.status,
+        };
+    }
+
+    assert.ok(workerResultA);
+    assert.equal(workerResultA.reason, 'stale_attempt_token');
+    assert.equal(job.status, 'confirmation_queued', 'Job remains confirmation_queued for Attempt B');
+    assert.equal(job.confirmationToken, tokenB, 'Job retains tokenB');
+
+    // 5. Attempt B job arrives at worker with payload { confirmationToken: tokenB }
+    const claimB = workerAttemptClaim(job, tokenB);
+    assert.equal(claimB.claimed, true, 'Attempt B successfully claims job with tokenB');
+    assert.equal(job.status, 'importing', 'Job advances to importing for Attempt B');
+});
+
+

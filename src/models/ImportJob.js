@@ -33,6 +33,12 @@ const ImportJobSchema = new Schema({
         type: Schema.Types.ObjectId,
         default: null,
     },
+    // Confirmation attempt token to prevent stale confirmation attempts from executing
+    confirmationToken: {
+        type: String,
+        default: null,
+        index: true,
+    },
     status: {
         type: String,
         enum: [

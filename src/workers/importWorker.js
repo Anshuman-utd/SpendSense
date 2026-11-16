@@ -57,9 +57,12 @@ const worker = new Worker(
     }
 
     if (job.name === "confirm-import") {
-      const { importJobId, transactionIds } = job.data;
+      const { importJobId, transactionIds, confirmationToken } = job.data;
       if (!importJobId) throw new Error("Missing importJobId in job payload");
-      return await confirmImport(importJobId, transactionIds, { isWorker: true });
+      return await confirmImport(importJobId, transactionIds, {
+        isWorker: true,
+        confirmationToken,
+      });
     }
 
     throw new Error(`Unknown job type: "${job.name}"`);
