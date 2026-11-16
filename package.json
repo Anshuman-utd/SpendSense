@@ -7,8 +7,10 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "worker": "node --env-file=.env src/workers/importWorker.js",
+    "worker": "node src/workers/importWorker.js",
+    "worker:dev": "node --env-file=.env src/workers/importWorker.js",
     "test": "node --test tests/**/*.test.js",
+    "test:integration": "node --env-file=.env --test tests/integration_worker_pipeline.test.js",
     "lint": "biome check",
     "format": "biome format --write"
   },
