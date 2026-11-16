@@ -36,14 +36,50 @@ import {
 // Dedicated isolated queue name for integration tests
 const TEST_QUEUE_NAME = "test-statement-import-queue";
 
-// Test Redis database/instance (defaults to DB index 1 if REDIS_URL has no path)
-const TEST_REDIS_URL =
-  process.env.REDIS_TEST_URL ||
-  (process.env.REDIS_URL ? `${process.env.REDIS_URL.replace(/\/[0-9]+$/, "")}/1` : "redis://localhost:6379/1");
+// Test Redis database/instance: explicitly required via REDIS_TEST_URL (never derived from REDIS_URL)
+const TEST_REDIS_URL = process.env.REDIS_TEST_URL;
 
 // Test MongoDB URI: explicitly required via MONGODB_TEST_URI
 const RAW_PROD_URI = process.env.MONGODB_URI;
 const TEST_MONGO_URI = process.env.MONGODB_TEST_URI;
+
+/**
+ * Validates that the test Redis URL is explicitly configured and points
+ * to a dedicated isolated test Redis instance/URL, refusing production or undefined URLs.
+ */
+export function validateTestRedis(testRedisUrl, prodRedisUrl) {
+  if (!testRedisUrl || !testRedisUrl.trim()) {
+    return {
+      valid: false,
+      reason:
+        "REDIS_TEST_URL is not set. An explicit test Redis instance is required for destructive integration tests.",
+    };
+  }
+
+  if (prodRedisUrl && testRedisUrl.trim() === prodRedisUrl.trim()) {
+    return {
+      valid: false,
+      reason:
+        "REDIS_TEST_URL must not be identical to application REDIS_URL. Destructive testing on primary Redis is forbidden.",
+    };
+  }
+
+  try {
+    const url = new URL(testRedisUrl);
+    if (url.protocol !== "redis:" && url.protocol !== "rediss:") {
+      return {
+        valid: false,
+        reason: "REDIS_TEST_URL must use redis:// or rediss:// protocol.",
+      };
+    }
+    return { valid: true, url: testRedisUrl };
+  } catch (err) {
+    return {
+      valid: false,
+      reason: `Invalid REDIS_TEST_URL format: ${err.message}`,
+    };
+  }
+}
 
 /**
  * Validates that the test MongoDB URI is explicitly configured and points
@@ -131,14 +167,24 @@ test.before(async () => {
       return;
     }
 
-    // 2. Strict queue isolation check
+    // 2. Strict Redis isolation check: refuse to run if test Redis is not verified
+    const redisValidation = validateTestRedis(TEST_REDIS_URL, process.env.REDIS_URL);
+    if (!redisValidation.valid) {
+      console.log(
+        `[Integration Tests] Prerequisites not met: ${redisValidation.reason} Live integration tests will be skipped.`,
+      );
+      isEnvironmentAvailable = false;
+      return;
+    }
+
+    // 3. Strict queue isolation check
     assert.notEqual(
       TEST_QUEUE_NAME,
       DEFAULT_QUEUE_NAME,
       "Integration tests must never use the default production queue name.",
     );
 
-    // 3. Probe Redis
+    // 4. Probe Redis using verified test Redis URL
     testRedisClient = new IORedis(TEST_REDIS_URL, {
       connectTimeout: 2000,
       maxRetriesPerRequest: 1,
@@ -154,13 +200,13 @@ test.before(async () => {
       return;
     }
 
-    // 4. Clean ONLY the isolated test queue before tests (never touch statement-import-queue)
+    // 5. Clean ONLY the isolated test queue before tests (never touch statement-import-queue)
     const testQueue = getImportQueue(TEST_QUEUE_NAME, testRedisClient);
     if (testQueue) {
       await testQueue.obliterate({ force: true }).catch(() => {});
     }
 
-    // 5. Connect to MongoDB using verified test URI
+    // 6. Connect to MongoDB using verified test URI
     process.env.MONGODB_URI = TEST_MONGO_URI;
     await mongoose.connect(TEST_MONGO_URI, { bufferCommands: false });
     isEnvironmentAvailable = true;
@@ -284,6 +330,72 @@ test("Integration: Redis TLS configuration enforces verified certificates and SN
     if (prevCa) process.env.REDIS_CA_CERT = prevCa;
     else delete process.env.REDIS_CA_CERT;
   }
+
+  // Requirement 1: REDIS_TLS_REJECT_UNAUTHORIZED=false CANNOT disable TLS verification when NODE_ENV=production
+  const prevEnv = process.env.NODE_ENV;
+  const prevReject = process.env.REDIS_TLS_REJECT_UNAUTHORIZED;
+  try {
+    process.env.NODE_ENV = "production";
+    process.env.REDIS_TLS_REJECT_UNAUTHORIZED = "false";
+    const prodOpts = getRedisOptions(redissUrl, false);
+    assert.equal(
+      prodOpts.tls.rejectUnauthorized,
+      true,
+      "CRITICAL: rejectUnauthorized must remain true in production even if REDIS_TLS_REJECT_UNAUTHORIZED=false",
+    );
+
+    const prodWorkerOpts = getRedisOptions(redissUrl, true);
+    assert.equal(
+      prodWorkerOpts.tls.rejectUnauthorized,
+      true,
+      "Worker rejectUnauthorized must remain true in production",
+    );
+
+    // In non-production, REDIS_TLS_REJECT_UNAUTHORIZED=false is respected for local dev/self-signed testing
+    process.env.NODE_ENV = "development";
+    process.env.REDIS_TLS_REJECT_UNAUTHORIZED = "false";
+    const devOpts = getRedisOptions(redissUrl, false);
+    assert.equal(
+      devOpts.tls.rejectUnauthorized,
+      false,
+      "rejectUnauthorized is only disabled in non-production when explicitly configured",
+    );
+  } finally {
+    process.env.NODE_ENV = prevEnv;
+    if (prevReject) process.env.REDIS_TLS_REJECT_UNAUTHORIZED = prevReject;
+    else delete process.env.REDIS_TLS_REJECT_UNAUTHORIZED;
+  }
+});
+
+// Unit: Redis test URL validator (Requirement 2: explicit REDIS_TEST_URL required)
+test("Integration: Redis test validator requires explicit REDIS_TEST_URL and forbids primary Redis", () => {
+  // Empty
+  assert.equal(validateTestRedis("", "").valid, false);
+  assert.equal(validateTestRedis(null, null).valid, false);
+
+  // Matches primary Redis URL
+  const prodRedis = "redis://default:secret@redis.railway.internal:6379";
+  assert.equal(
+    validateTestRedis(prodRedis, prodRedis).valid,
+    false,
+    "Must reject if test Redis URL matches application REDIS_URL",
+  );
+
+  // Invalid protocol
+  assert.equal(
+    validateTestRedis("http://localhost:6379", null).valid,
+    false,
+    "Must reject non-redis protocols",
+  );
+
+  // Valid isolated test Redis URLs
+  const validLocalDb1 = "redis://localhost:6379/1";
+  const localRes = validateTestRedis(validLocalDb1, "redis://localhost:6379/0");
+  assert.equal(localRes.valid, true);
+
+  const validTlsTest = "rediss://test-redis.railway.internal:6380";
+  const tlsRes = validateTestRedis(validTlsTest, prodRedis);
+  assert.equal(tlsRes.valid, true);
 });
 
 // Unit: Database isolation validator
@@ -857,3 +969,175 @@ test("Integration: Late Redis job after enqueue timeout rollback is safely recon
     "Staged transaction status was not modified",
   );
 });
+
+// Live: Overlapping confirmation attempts and delayed queue acknowledgments (Requirement #3 & #4)
+test("Integration: Overlapping confirmation attempts: delayed Attempt A job is rejected as stale and does not interfere with Attempt B", async (t) => {
+  if (!isEnvironmentAvailable) {
+    t.skip("Redis or MongoDB not available for live worker test");
+    return;
+  }
+
+  // 1. Create an ImportJob in ready_for_review with 2 staged ImportedTransaction records
+  const fakeChecksum = crypto.randomBytes(32).toString("hex");
+  const job = await ImportJob.create({
+    userId: testUserId,
+    accountId: testAccountId,
+    originalFilename: "overlapping_attempts_test.csv",
+    fileChecksum: fakeChecksum,
+    fileSize: 2048,
+    currency: "INR",
+    status: "ready_for_review",
+    totalRows: 2,
+    progress: { stage: "Ready for review", percent: 100 },
+  });
+  createdJobIds.push(job._id);
+
+  const txn1 = await ImportedTransaction.create({
+    importJobId: job._id,
+    userId: testUserId,
+    accountId: testAccountId,
+    sourceRowIndex: 0,
+    transactionDate: new Date("2026-11-16"),
+    originalDescription: "AMAZON RETAIL INDIA",
+    normalizedDescription: "AMAZON RETAIL INDIA",
+    merchant: "Amazon",
+    category: "Shopping",
+    amountMinor: 159900,
+    direction: "debit",
+    classification: "expense",
+    currency: "INR",
+    importStatus: "pending",
+    selected: true,
+  });
+
+  const txn2 = await ImportedTransaction.create({
+    importJobId: job._id,
+    userId: testUserId,
+    accountId: testAccountId,
+    sourceRowIndex: 1,
+    transactionDate: new Date("2026-11-16"),
+    originalDescription: "STARBUCKS COFFEE",
+    normalizedDescription: "STARBUCKS COFFEE",
+    merchant: "Starbucks",
+    category: "Food & Dining",
+    amountMinor: 38000,
+    direction: "debit",
+    classification: "expense",
+    currency: "INR",
+    importStatus: "pending",
+    selected: true,
+  });
+
+  // 2. ATTEMPT A: User triggers confirmation attempt A
+  const tokenA = `token_A_${Date.now()}`;
+  await ImportJob.findByIdAndUpdate(job._id, {
+    status: "confirmation_queued",
+    confirmationToken: tokenA,
+  });
+
+  // Attempt A enqueue experiences timeout in API -> API rolls back status
+  await ImportJob.findOneAndUpdate(
+    { _id: job._id, status: "confirmation_queued", confirmationToken: tokenA },
+    { $set: { status: "ready_for_review", confirmationToken: null } },
+  );
+
+  // 3. ATTEMPT B: User triggers confirmation attempt B immediately after
+  const tokenB = `token_B_${Date.now()}`;
+  await ImportJob.findOneAndUpdate(
+    { _id: job._id, status: { $in: ["ready_for_review", "partially_completed"] } },
+    { $set: { status: "confirmation_queued", confirmationToken: tokenB } },
+  );
+
+  // In MongoDB right now, status is 'confirmation_queued' and confirmationToken is tokenB!
+  const currentDbJob = await ImportJob.findById(job._id);
+  assert.equal(currentDbJob.status, "confirmation_queued");
+  assert.equal(currentDbJob.confirmationToken, tokenB);
+
+  // 4. Concurrency race trigger:
+  // Attempt A's delayed Redis job now lands in Redis with tokenA!
+  // And Attempt B's job also lands in Redis with tokenB!
+  const queue = getImportQueue(TEST_QUEUE_NAME, testRedisClient);
+  const lateJobAId = `confirm-${job._id.toString()}-${tokenA}`;
+  const validJobBId = `confirm-${job._id.toString()}-${tokenB}`;
+
+  // Add Attempt A's delayed job first
+  await queue.add(
+    "confirm-import",
+    { importJobId: job._id.toString(), confirmationToken: tokenA },
+    { jobId: lateJobAId },
+  );
+
+  // Add Attempt B's legitimate job
+  await queue.add(
+    "confirm-import",
+    { importJobId: job._id.toString(), confirmationToken: tokenB },
+    { jobId: validJobBId },
+  );
+
+  // 5. Start live worker on TEST_QUEUE_NAME to process both jobs sequentially
+  let workerRedis = new IORedis(
+    TEST_REDIS_URL,
+    getRedisOptions(TEST_REDIS_URL, true),
+  );
+
+  const jobResults = new Map();
+  const worker = new Worker(
+    TEST_QUEUE_NAME,
+    async (bJob) => {
+      console.log(`[Overlapping Worker] Processing: ${bJob.name} (${bJob.id})`);
+      if (bJob.name === "confirm-import") {
+        const res = await confirmImport(
+          bJob.data.importJobId,
+          bJob.data.transactionIds,
+          { isWorker: true, confirmationToken: bJob.data.confirmationToken },
+        );
+        jobResults.set(bJob.id, res);
+        return res;
+      }
+    },
+    { connection: workerRedis, concurrency: 1 },
+  );
+  worker.on("error", () => {});
+  await worker.waitUntilReady();
+
+  // Wait for both jobs to be processed
+  await new Promise((resolve) => {
+    let completedCount = 0;
+    worker.on("completed", (j) => {
+      if (j.id === lateJobAId || j.id === validJobBId) {
+        completedCount++;
+        if (completedCount === 2) resolve();
+      }
+    });
+  });
+
+  await worker.close();
+  await workerRedis.quit();
+
+  // 6. Assertions:
+  // (a) Attempt A's delayed job was rejected as stale and skipped without error
+  const resA = jobResults.get(lateJobAId);
+  assert.ok(resA, "Result for Attempt A must exist");
+  assert.equal(resA.reconciled, true, "Attempt A must be flagged as reconciled");
+  assert.equal(resA.skipped, true, "Attempt A must be skipped");
+  assert.equal(resA.reason, "stale_attempt_token", "Attempt A detected stale attempt token");
+
+  // (b) Attempt B successfully claimed and completed the confirmation
+  const resB = jobResults.get(validJobBId);
+  assert.ok(resB, "Result for Attempt B must exist");
+  assert.equal(resB.importedCount, 2, "Attempt B imported both transactions");
+
+  // (c) MongoDB ImportJob is in 'completed' status
+  const finalJob = await ImportJob.findById(job._id);
+  assert.equal(finalJob.status, "completed", "Job transitioned to completed");
+  assert.equal(finalJob.importedRows, 2, "Exactly 2 rows imported");
+
+  // (d) Exactly 2 Expense records exist in MongoDB (no duplicate writes or interference)
+  const createdExpenses = await Expense.find({ importJobId: job._id });
+  assert.equal(createdExpenses.length, 2, "Exactly 2 expenses created in total");
+
+  // (e) Both transactions marked imported
+  const updatedTxns = await ImportedTransaction.find({ importJobId: job._id });
+  assert.ok(updatedTxns.every((t) => t.importStatus === "imported"));
+});
+
