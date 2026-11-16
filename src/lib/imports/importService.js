@@ -233,7 +233,7 @@ export async function processImportJob(importJobId) {
 
 /**
  * Confirm selected transactions and create Expense records.
- * Ensures strict idempotency and cleans up raw files upon completion.
+ * Uses atomic state transitions, idempotent database writes, and cleans up raw files upon completion.
  */
 export async function confirmImport(
   importJobId,
@@ -241,31 +241,51 @@ export async function confirmImport(
 ) {
   await dbConnect();
 
-  const job = await ImportJob.findById(importJobId);
+  // 1. Atomic claim to 'importing' status (Requirements #2, #3, #5, #6)
+  const job = await ImportJob.findOneAndUpdate(
+    {
+      _id: importJobId,
+      status: {
+        $in: [
+          'confirmation_queued',
+          'importing',
+          'ready_for_review',
+          'partially_completed',
+        ],
+      },
+    },
+    {
+      $set: {
+        status: 'importing',
+        'progress.stage': 'Importing expenses',
+        'progress.percent': 10,
+        'progress.message': 'Creating verified expense records...',
+      },
+    },
+    { new: true },
+  );
+
   if (!job) {
-    throw new Error(`Import job ${importJobId} not found`);
+    const existing = await ImportJob.findById(importJobId);
+    if (!existing) {
+      throw new Error(`Import job ${importJobId} not found`);
+    }
+    if (existing.status === 'completed') {
+      return {
+        importedCount: existing.importedRows || 0,
+        skippedCount: 0,
+        failedCount: 0,
+        alreadyCompleted: true,
+      };
+    }
+    throw new Error(`Job cannot be confirmed from status "${existing.status}"`);
   }
 
-  if (
-    job.status !== "ready_for_review" &&
-    job.status !== "partially_completed"
-  ) {
-    throw new Error(`Job cannot be confirmed from status "${job.status}"`);
-  }
-
-  job.status = "importing";
-  job.progress = {
-    stage: "Importing expenses",
-    percent: 10,
-    message: "Creating verified expense records...",
-  };
-  await job.save();
-
-  // Query transactions to import
+  // 2. Query transactions to import (Idempotent: skip already imported)
   const query = {
     importJobId: job._id,
     userId: job.userId,
-    importStatus: { $ne: "imported" }, // Idempotency: skip already imported
+    importStatus: { $ne: 'imported' },
   };
 
   if (
@@ -287,8 +307,8 @@ export async function confirmImport(
     const txn = transactionsToImport[i];
 
     // Only spending/expense transactions create Expense records (Rule #4 & #8)
-    if (txn.classification !== "expense") {
-      txn.importStatus = "skipped";
+    if (txn.classification !== 'expense') {
+      txn.importStatus = 'skipped';
       txn.importError = `Skipped: classification is ${txn.classification} (not spending)`;
       await txn.save();
       skippedCount++;
@@ -309,26 +329,39 @@ export async function confirmImport(
           txn.originalDescription ||
           `${txn.category} Expense`;
 
-        existingExpense = await Expense.create({
-          userId: job.userId,
-          amount,
-          category: txn.category || "Other",
-          date: expenseDate,
-          description,
-          merchant: txn.merchant || "Unknown",
-          paymentMethod: "Bank Transfer",
-          source: "import",
-          importJobId: job._id,
-          importedTransactionId: txn._id,
-          financialAccountId: job.accountId,
-          currency: txn.currency || job.currency || "INR",
-          sourceReference: txn.bankReference || "",
-        });
+        try {
+          existingExpense = await Expense.create({
+            userId: job.userId,
+            amount,
+            category: txn.category || 'Other',
+            date: expenseDate,
+            description,
+            merchant: txn.merchant || 'Unknown',
+            paymentMethod: 'Bank Transfer',
+            source: 'import',
+            importJobId: job._id,
+            importedTransactionId: txn._id,
+            financialAccountId: job.accountId,
+            currency: txn.currency || job.currency || 'INR',
+            sourceReference: txn.bankReference || '',
+          });
+        } catch (createErr) {
+          if (createErr.code === 11000) {
+            // Concurrent execution or duplicate key: recover existing record
+            existingExpense = await Expense.findOne({
+              importedTransactionId: txn._id,
+            });
+            if (!existingExpense) throw createErr;
+          } else {
+            throw createErr;
+          }
+        }
       }
 
+      // Mark transaction imported ONLY after Expense document is persisted (Requirement #10)
       txn.linkedExpenseId = existingExpense._id;
-      txn.importStatus = "imported";
-      txn.importError = "";
+      txn.importStatus = 'imported';
+      txn.importError = '';
       await txn.save();
       importedCount++;
     } catch (err) {
@@ -336,7 +369,7 @@ export async function confirmImport(
         `[ImportService] Error saving expense for txn ${txn._id}:`,
         err,
       );
-      txn.importStatus = "failed";
+      txn.importStatus = 'failed';
       txn.importError = err.message;
       await txn.save();
       failedCount++;
@@ -346,39 +379,51 @@ export async function confirmImport(
     if (i % 25 === 0 || i === transactionsToImport.length - 1) {
       const percent = Math.min(
         95,
-        10 + Math.round((i / transactionsToImport.length) * 85),
+        10 + Math.round(((i + 1) / transactionsToImport.length) * 85),
       );
-      job.progress = {
-        stage: "Importing expenses",
-        percent,
-        message: `Imported ${importedCount} of ${transactionsToImport.length} transactions...`,
-      };
-      await job.save();
+      await ImportJob.findByIdAndUpdate(job._id, {
+        'progress.stage': 'Importing expenses',
+        'progress.percent': percent,
+        'progress.message': `Imported ${importedCount} of ${transactionsToImport.length} transactions...`,
+      });
     }
   }
 
-  job.importedRows = (job.importedRows || 0) + importedCount;
-  job.failedRows = failedCount;
-  job.status = failedCount === 0 ? "completed" : "partially_completed";
-  job.completedAt = new Date();
-  job.progress = {
-    stage: "Completed",
-    percent: 100,
-    message: `Successfully imported ${importedCount} expenses${skippedCount > 0 ? `, skipped ${skippedCount}` : ""}.`,
-  };
-  await job.save();
+  const totalImported = await ImportedTransaction.countDocuments({
+    importJobId: job._id,
+    importStatus: 'imported',
+  });
 
-  // Raw file cleanup (correction #3)
-  if (job.gridFSFileId) {
+  const finalStatus = failedCount === 0 ? 'completed' : 'partially_completed';
+  const updatedJob = await ImportJob.findByIdAndUpdate(
+    job._id,
+    {
+      importedRows: totalImported,
+      failedRows: failedCount,
+      status: finalStatus,
+      completedAt: new Date(),
+      progress: {
+        stage: finalStatus === 'completed' ? 'Completed' : 'Partially completed',
+        percent: 100,
+        message:
+          finalStatus === 'completed'
+            ? `Successfully imported ${totalImported} expenses${skippedCount > 0 ? `, skipped ${skippedCount}` : ''}.`
+            : `Imported ${totalImported} expenses with ${failedCount} errors.`,
+      },
+    },
+    { new: true },
+  );
+
+  // Raw file cleanup upon successful completion (correction #3)
+  if (finalStatus === 'completed' && updatedJob.gridFSFileId) {
     try {
-      await deleteFromGridFS(job.gridFSFileId);
-      job.gridFSFileId = null;
-      await job.save();
+      await deleteFromGridFS(updatedJob.gridFSFileId);
+      await ImportJob.findByIdAndUpdate(job._id, { gridFSFileId: null });
       console.log(
         `[ImportService] Cleaned up raw statement file for job ${job._id}`,
       );
     } catch (cleanupErr) {
-      console.warn("[ImportService] GridFS cleanup error:", cleanupErr.message);
+      console.warn('[ImportService] GridFS cleanup error:', cleanupErr.message);
     }
   }
 
