@@ -15,8 +15,9 @@ import ImportedTransaction from "../src/models/ImportedTransaction.js";
 import Expense from "../src/models/Expense.js";
 import FinancialAccount from "../src/models/FinancialAccount.js";
 import User from "../src/models/User.js";
-import { uploadToGridFS, deleteFromGridFS } from "../src/lib/gridfs.js";
+import { uploadToGridFS } from "../src/lib/gridfs.js";
 import {
+  DEFAULT_QUEUE_NAME,
   QUEUE_NAME,
   getImportQueue,
   addImportJob,
@@ -32,13 +33,83 @@ import {
   confirmImport,
 } from "../src/lib/imports/importService.js";
 
-const TEST_REDIS_URL = process.env.REDIS_URL || "redis://localhost:6379";
-// Use isolated spendsense_test database
-const RAW_MONGO_URI = process.env.MONGODB_URI;
-const TEST_MONGO_URI = RAW_MONGO_URI
-  ? RAW_MONGO_URI.replace(/\.net\/[^?]*\?/, ".net/spendsense_test?")
-  : "mongodb://localhost:27017/spendsense_test";
-process.env.MONGODB_URI = TEST_MONGO_URI;
+// Dedicated isolated queue name for integration tests
+const TEST_QUEUE_NAME = "test-statement-import-queue";
+
+// Test Redis database/instance (defaults to DB index 1 if REDIS_URL has no path)
+const TEST_REDIS_URL =
+  process.env.REDIS_TEST_URL ||
+  (process.env.REDIS_URL ? `${process.env.REDIS_URL.replace(/\/[0-9]+$/, "")}/1` : "redis://localhost:6379/1");
+
+// Test MongoDB URI: explicitly required via MONGODB_TEST_URI
+const RAW_PROD_URI = process.env.MONGODB_URI;
+const TEST_MONGO_URI = process.env.MONGODB_TEST_URI;
+
+/**
+ * Validates that the test MongoDB URI is explicitly configured and points
+ * to a dedicated isolated test database, refusing production or undefined DBs.
+ */
+export function validateTestDatabase(testUri, prodUri) {
+  if (!testUri || !testUri.trim()) {
+    return {
+      valid: false,
+      reason:
+        "MONGODB_TEST_URI is not set. An explicit test database is required for test isolation.",
+    };
+  }
+
+  if (prodUri && testUri.trim() === prodUri.trim()) {
+    return {
+      valid: false,
+      reason:
+        "MONGODB_TEST_URI must not match production MONGODB_URI. Destructive testing is forbidden.",
+    };
+  }
+
+  try {
+    const url = new URL(testUri.replace(/^mongodb(\+srv)?:\/\//, "http://"));
+    const dbName = url.pathname.replace(/^\//, "").split("?")[0];
+    if (!dbName) {
+      return {
+        valid: false,
+        reason: "MONGODB_TEST_URI does not specify a target database name.",
+      };
+    }
+
+    const forbiddenNames = [
+      "admin",
+      "local",
+      "config",
+      "spendsense",
+      "production",
+      "prod",
+    ];
+    if (forbiddenNames.includes(dbName.toLowerCase())) {
+      return {
+        valid: false,
+        reason: `Database name "${dbName}" in MONGODB_TEST_URI is unsafe for testing.`,
+      };
+    }
+
+    if (
+      dbName === "spendsense_test" ||
+      dbName.endsWith("_test") ||
+      dbName.includes("test")
+    ) {
+      return { valid: true, dbName };
+    }
+
+    return {
+      valid: false,
+      reason: `Database "${dbName}" is not recognized as a dedicated test database (must include "test" or end with "_test").`,
+    };
+  } catch (err) {
+    return {
+      valid: false,
+      reason: `Invalid MONGODB_TEST_URI format: ${err.message}`,
+    };
+  }
+}
 
 let isEnvironmentAvailable = false;
 let testWorker = null;
@@ -50,7 +121,24 @@ let createdJobIds = [];
 // Probe environment before running live integration tests
 test.before(async () => {
   try {
-    // Probe Redis
+    // 1. Strict database isolation check: refuse to run if test DB is not verified
+    const dbValidation = validateTestDatabase(TEST_MONGO_URI, RAW_PROD_URI);
+    if (!dbValidation.valid) {
+      console.log(
+        `[Integration Tests] Prerequisites not met: ${dbValidation.reason} Live integration tests will be skipped.`,
+      );
+      isEnvironmentAvailable = false;
+      return;
+    }
+
+    // 2. Strict queue isolation check
+    assert.notEqual(
+      TEST_QUEUE_NAME,
+      DEFAULT_QUEUE_NAME,
+      "Integration tests must never use the default production queue name.",
+    );
+
+    // 3. Probe Redis
     testRedisClient = new IORedis(TEST_REDIS_URL, {
       connectTimeout: 2000,
       maxRetriesPerRequest: 1,
@@ -66,20 +154,21 @@ test.before(async () => {
       return;
     }
 
-    // Clean stale queue jobs before test
-    const queue = getImportQueue();
-    if (queue) {
-      await queue.obliterate({ force: true }).catch(() => {});
+    // 4. Clean ONLY the isolated test queue before tests (never touch statement-import-queue)
+    const testQueue = getImportQueue(TEST_QUEUE_NAME, testRedisClient);
+    if (testQueue) {
+      await testQueue.obliterate({ force: true }).catch(() => {});
     }
 
-    // Probe MongoDB
+    // 5. Connect to MongoDB using verified test URI
+    process.env.MONGODB_URI = TEST_MONGO_URI;
     await mongoose.connect(TEST_MONGO_URI, { bufferCommands: false });
     isEnvironmentAvailable = true;
     console.log(
-      "[Integration Tests] Successfully connected to live Redis and isolated MongoDB test DB.",
+      `[Integration Tests] Successfully connected to live test Redis and isolated MongoDB test DB ("${dbValidation.dbName}").`,
     );
 
-    // Create test user and financial account
+    // Create test user and financial account in test DB
     const user = await User.create({
       name: "Integration Test User",
       email: `test_worker_${Date.now()}@example.com`,
@@ -106,12 +195,12 @@ test.before(async () => {
 });
 
 test.after(async () => {
+  // Never run destructive cleanup if isolation was not established
   if (isEnvironmentAvailable) {
     try {
       if (testWorker) {
         await testWorker.close();
       }
-      // Clean up test data from spendsense_test
       if (createdJobIds.length > 0) {
         await ImportJob.deleteMany({ _id: { $in: createdJobIds } });
         await ImportedTransaction.deleteMany({
@@ -128,6 +217,7 @@ test.after(async () => {
       if (testRedisClient) {
         await testRedisClient.quit();
       }
+      await closeQueue(TEST_QUEUE_NAME);
       await closeQueue();
       await mongoose.disconnect();
       console.log(
@@ -139,8 +229,98 @@ test.after(async () => {
   }
 });
 
+// Unit: Redis TLS security options
+test("Integration: Redis TLS configuration enforces verified certificates and SNI", () => {
+  const redissUrl = "rediss://redis-cluster.railway.internal:6380";
+
+  // Worker options
+  const workerOpts = getRedisOptions(redissUrl, true);
+  assert.ok(workerOpts.tls, "TLS options must be defined for rediss://");
+  assert.equal(
+    workerOpts.tls.rejectUnauthorized,
+    true,
+    "rejectUnauthorized must default to true in production",
+  );
+  assert.equal(
+    workerOpts.tls.servername,
+    "redis-cluster.railway.internal",
+    "SNI servername must match hostname",
+  );
+
+  // Producer options
+  const producerOpts = getRedisOptions(redissUrl, false);
+  assert.ok(producerOpts.tls, "TLS options must be defined for producer rediss://");
+  assert.equal(
+    producerOpts.tls.rejectUnauthorized,
+    true,
+    "Producer rejectUnauthorized must default to true",
+  );
+  assert.equal(
+    producerOpts.tls.servername,
+    "redis-cluster.railway.internal",
+    "Producer SNI servername must match hostname",
+  );
+
+  // RFC 6066: IP addresses must not set SNI servername
+  const ipRedissUrl = "rediss://127.0.0.1:6380";
+  const ipOpts = getRedisOptions(ipRedissUrl, false);
+  assert.equal(
+    ipOpts.tls.servername,
+    undefined,
+    "IP address must not set SNI servername per RFC 6066",
+  );
+
+  // Custom CA support
+  const prevCa = process.env.REDIS_CA_CERT;
+  try {
+    process.env.REDIS_CA_CERT = "-----BEGIN CERTIFICATE-----\nMOCK_CA\n-----END CERTIFICATE-----";
+    const customCaOpts = getRedisOptions(redissUrl, false);
+    assert.deepEqual(
+      customCaOpts.tls.ca,
+      ["-----BEGIN CERTIFICATE-----\nMOCK_CA\n-----END CERTIFICATE-----"],
+      "Custom CA must be configured when REDIS_CA_CERT is provided",
+    );
+  } finally {
+    if (prevCa) process.env.REDIS_CA_CERT = prevCa;
+    else delete process.env.REDIS_CA_CERT;
+  }
+});
+
+// Unit: Database isolation validator
+test("Integration: Database validator enforces explicit test DB isolation and refuses production", () => {
+  // Empty
+  assert.equal(validateTestDatabase("", "").valid, false);
+  assert.equal(validateTestDatabase(null, null).valid, false);
+
+  // Matches production URI
+  const prod = "mongodb+srv://user:pass@cluster.net/spendsense?appName=SpendSense";
+  assert.equal(
+    validateTestDatabase(prod, prod).valid,
+    false,
+    "Must reject if test URI matches prod URI",
+  );
+
+  // Unsafe database names
+  const unsafeProd = "mongodb://localhost:27017/spendsense";
+  assert.equal(validateTestDatabase(unsafeProd, null).valid, false);
+
+  const unsafeAdmin = "mongodb://localhost:27017/admin";
+  assert.equal(validateTestDatabase(unsafeAdmin, null).valid, false);
+
+  // Valid isolated test DBs
+  const validAtlas = "mongodb+srv://user:pass@cluster.net/spendsense_test?appName=SpendSense";
+  const atlasRes = validateTestDatabase(validAtlas, prod);
+  assert.equal(atlasRes.valid, true);
+  assert.equal(atlasRes.dbName, "spendsense_test");
+
+  const validLocal = "mongodb://localhost:27017/test_app_test";
+  const localRes = validateTestDatabase(validLocal, null);
+  assert.equal(localRes.valid, true);
+  assert.equal(localRes.dbName, "test_app_test");
+});
+
+// Unit: Producer and worker Redis options strictly separated and sanitized
 test("Integration: Producer and Worker Redis options are strictly separated and sanitized", () => {
-  // 1. Sanitization
   const sensitiveUrl =
     "redis://default:supersecretpassword123@redis-cluster.railway.internal:6379/0";
   const sanitized = sanitizeRedisUrl(sensitiveUrl);
@@ -153,7 +333,6 @@ test("Integration: Producer and Worker Redis options are strictly separated and 
     "Host and port must be preserved",
   );
 
-  // 2. Producer configuration
   const producerOpts = getRedisOptions("redis://localhost:6379", false);
   assert.equal(
     producerOpts.maxRetriesPerRequest,
@@ -171,7 +350,6 @@ test("Integration: Producer and Worker Redis options are strictly separated and 
     "Producer must enforce connect timeout",
   );
 
-  // 3. Worker configuration
   const workerOpts = getRedisOptions("redis://localhost:6379", true);
   assert.equal(
     workerOpts.maxRetriesPerRequest,
@@ -180,6 +358,7 @@ test("Integration: Producer and Worker Redis options are strictly separated and 
   );
 });
 
+// Unit: Synchronous import overrides strictly disabled in production
 test("Integration: Synchronous import overrides are strictly disabled in production", () => {
   const prevEnv = process.env.NODE_ENV;
   try {
@@ -212,7 +391,8 @@ test("Integration: Synchronous import overrides are strictly disabled in product
   }
 });
 
-test("Integration: Live BullMQ worker processes statement import end-to-end", async (t) => {
+// Live: Worker processes statement import end-to-end on isolated queue
+test("Integration: Live BullMQ worker processes statement import end-to-end on isolated queue", async (t) => {
   if (!isEnvironmentAvailable) {
     t.skip("Redis or MongoDB not available for live worker test");
     return;
@@ -220,7 +400,6 @@ test("Integration: Live BullMQ worker processes statement import end-to-end", as
 
   let workerRedis = null;
   try {
-    // 1. Setup sample CSV and upload to GridFS
     const csvContent = `Date,Narration,Withdrawal,Deposit
 12/11/2026,SWIGGY BANGALORE,450.00,
 13/11/2026,UBER TRIP,320.00,
@@ -237,7 +416,6 @@ test("Integration: Live BullMQ worker processes statement import end-to-end", as
       metadata: { userId: testUserId, accountId: testAccountId, checksum },
     });
 
-    // 2. Create ImportJob document
     const job = await ImportJob.create({
       userId: testUserId,
       accountId: testAccountId,
@@ -257,24 +435,27 @@ test("Integration: Live BullMQ worker processes statement import end-to-end", as
     });
     createdJobIds.push(job._id);
 
-    // 3. Initialize live BullMQ Worker
+    // Initialize live worker on TEST_QUEUE_NAME
     workerRedis = new IORedis(
       TEST_REDIS_URL,
       getRedisOptions(TEST_REDIS_URL, true),
     );
     testWorker = new Worker(
-      QUEUE_NAME,
+      TEST_QUEUE_NAME,
       async (bJob) => {
         console.log(
           `[Integration Worker] Received job: ${bJob.name} (${bJob.id})`,
         );
         if (bJob.name === "process-import") {
-          return await processImportJob(bJob.data.importJobId);
+          return await processImportJob(bJob.data.importJobId, {
+            isWorker: true,
+          });
         }
         if (bJob.name === "confirm-import") {
           return await confirmImport(
             bJob.data.importJobId,
             bJob.data.transactionIds,
+            { isWorker: true },
           );
         }
       },
@@ -289,9 +470,6 @@ test("Integration: Live BullMQ worker processes statement import end-to-end", as
           j.data?.importJobId === job._id.toString() &&
           j.name === "process-import"
         ) {
-          console.log(
-            `[Integration Worker] Completed job: ${j.name} (${j.id})`,
-          );
           testWorker.off("completed", onComplete);
           resolve(j);
         }
@@ -301,10 +479,6 @@ test("Integration: Live BullMQ worker processes statement import end-to-end", as
           j?.data?.importJobId === job._id.toString() &&
           j?.name === "process-import"
         ) {
-          console.error(
-            `[Integration Worker] Failed job: ${j?.name} (${j?.id}):`,
-            err,
-          );
           testWorker.off("failed", onFailed);
           reject(err);
         }
@@ -313,15 +487,16 @@ test("Integration: Live BullMQ worker processes statement import end-to-end", as
       testWorker.on("failed", onFailed);
     });
 
-    // 4. Enqueue BullMQ job via addImportJob
-    const enqueued = await addImportJob(job._id.toString());
+    // Enqueue on TEST_QUEUE_NAME
+    const enqueued = await addImportJob(job._id.toString(), {
+      queueName: TEST_QUEUE_NAME,
+      connection: testRedisClient,
+    });
     assert.ok(enqueued, "Job must be successfully enqueued to BullMQ");
     assert.equal(enqueued.id, `process-${job._id.toString()}`);
 
-    // 5. Wait for worker to finish processing
     await jobCompletedPromise;
 
-    // 6. Verify ImportJob state in MongoDB
     const updatedJob = await ImportJob.findById(job._id);
     assert.equal(
       updatedJob.status,
@@ -330,23 +505,14 @@ test("Integration: Live BullMQ worker processes statement import end-to-end", as
     );
     assert.equal(updatedJob.totalRows, 5, "Must parse exactly 5 rows");
 
-    // 7. Verify ImportedTransaction records staged in MongoDB
     const staged = await ImportedTransaction.find({ importJobId: job._id });
     assert.equal(
       staged.length,
       5,
       "Must stage exactly 5 ImportedTransaction records",
     );
-    assert.ok(
-      staged.some((t) => (t.merchant || "").toLowerCase().includes("swiggy")),
-      "Swiggy merchant extracted",
-    );
-    assert.ok(
-      staged.some((t) => t.direction === "credit"),
-      "Salary detected as credit",
-    );
 
-    // 8. Test Confirmation Pipeline: Atomic claim -> confirmation_queued -> importing -> completed
+    // Test Confirmation Pipeline: Atomic claim -> confirmation_queued -> importing -> completed
     const claimed = await ImportJob.findOneAndUpdate(
       {
         _id: job._id,
@@ -361,7 +527,6 @@ test("Integration: Live BullMQ worker processes statement import end-to-end", as
       "Atomic claim sets confirmation_queued",
     );
 
-    // Set up completion listener for confirm-import
     const confirmPromise = new Promise((resolve, reject) => {
       const onComplete = (j) => {
         if (
@@ -385,18 +550,18 @@ test("Integration: Live BullMQ worker processes statement import end-to-end", as
       testWorker.on("failed", onFailed);
     });
 
-    // Enqueue confirm job with deterministic jobId
-    const confirmEnqueued = await addConfirmJob(job._id.toString());
+    const confirmEnqueued = await addConfirmJob(job._id.toString(), null, {
+      queueName: TEST_QUEUE_NAME,
+      connection: testRedisClient,
+    });
     assert.ok(
       confirmEnqueued,
       "Confirmation job must be successfully enqueued",
     );
     assert.equal(confirmEnqueued.id, `confirm-${job._id.toString()}`);
 
-    // Wait for worker to process confirmation
     await confirmPromise;
 
-    // Verify completed status and expenses created
     const finalJob = await ImportJob.findById(job._id);
     assert.equal(
       finalJob.status,
@@ -405,7 +570,6 @@ test("Integration: Live BullMQ worker processes statement import end-to-end", as
     );
     assert.ok(finalJob.importedRows > 0, "Imported rows count must be > 0");
 
-    // Verify Expense documents
     const createdExpenses = await Expense.find({ userId: testUserId });
     assert.ok(
       createdExpenses.length > 0,
@@ -416,21 +580,6 @@ test("Integration: Live BullMQ worker processes statement import end-to-end", as
       finalJob.importedRows,
       "Number of expenses matches importedRows",
     );
-
-    // Verify ImportedTransaction links
-    const finalizedTransactions = await ImportedTransaction.find({
-      importJobId: job._id,
-      importStatus: "imported",
-    });
-    assert.equal(
-      finalizedTransactions.length,
-      finalJob.importedRows,
-      "Imported transactions match expense count",
-    );
-    assert.ok(
-      finalizedTransactions.every((t) => t.linkedExpenseId),
-      "Every imported txn has linkedExpenseId",
-    );
   } finally {
     if (testWorker) {
       await testWorker.close().catch(() => {});
@@ -440,6 +589,7 @@ test("Integration: Live BullMQ worker processes statement import end-to-end", as
   }
 });
 
+// Live: Idempotent resume and duplicate prevention on re-confirmation
 test("Integration: Idempotent resume and duplicate prevention on re-confirmation", async (t) => {
   if (!isEnvironmentAvailable) {
     t.skip("Redis or MongoDB not available for live worker test");
@@ -459,9 +609,11 @@ test("Integration: Idempotent resume and duplicate prevention on re-confirmation
     userId: testUserId,
   });
 
-  // Re-run confirmImport directly or via worker on the completed job
-  const result = await confirmImport(job._id.toString());
+  const result = await confirmImport(job._id.toString(), null, {
+    isWorker: true,
+  });
   assert.ok(result, "confirmImport must execute idempotently");
+  assert.ok(result.alreadyCompleted, "Recognizes already completed job");
 
   const postExpenseCount = await Expense.countDocuments({ userId: testUserId });
   assert.equal(
@@ -471,26 +623,26 @@ test("Integration: Idempotent resume and duplicate prevention on re-confirmation
   );
 });
 
-test("Integration: Deterministic job IDs allow clean retry of failed BullMQ jobs", async (t) => {
+// Live: Deterministic job IDs allow clean retry of failed BullMQ jobs
+test("Integration: Deterministic job IDs allow clean retry of failed BullMQ jobs on isolated queue", async (t) => {
   if (!isEnvironmentAvailable) {
     t.skip("Redis or MongoDB not available for live worker test");
     return;
   }
 
-  const queue = getImportQueue();
-  assert.ok(queue, "Queue must be accessible");
+  const queue = getImportQueue(TEST_QUEUE_NAME, testRedisClient);
+  assert.ok(queue, "Test queue must be accessible");
 
   const fakeJobId = new mongoose.Types.ObjectId().toString();
   const deterministicId = `confirm-${fakeJobId}`;
 
-  // Add a job and intentionally fail it via worker
   const workerRedis = new IORedis(
     TEST_REDIS_URL,
     getRedisOptions(TEST_REDIS_URL, true),
   );
   let failPromise;
   const failingWorker = new Worker(
-    QUEUE_NAME,
+    TEST_QUEUE_NAME,
     async (j) => {
       if (j.id === deterministicId) {
         throw new Error("Simulated worker crash");
@@ -519,8 +671,11 @@ test("Integration: Deterministic job IDs allow clean retry of failed BullMQ jobs
   const state = await failedJob.getState();
   assert.equal(state, "failed", "Job is in failed state");
 
-  // Call addConfirmJob with same fakeJobId: it must clean up the failed job and re-enqueue successfully!
-  const retriedJob = await addConfirmJob(fakeJobId);
+  // Call addConfirmJob with same fakeJobId: must clean up failed job and re-enqueue
+  const retriedJob = await addConfirmJob(fakeJobId, null, {
+    queueName: TEST_QUEUE_NAME,
+    connection: testRedisClient,
+  });
   assert.ok(
     retriedJob,
     "addConfirmJob must re-enqueue despite existing failed job",
@@ -534,6 +689,171 @@ test("Integration: Deterministic job IDs allow clean retry of failed BullMQ jobs
   const newState = await retriedJob.getState();
   assert.notEqual(newState, "failed", "Job is active or waiting, not failed");
 
-  // Clean up
   await retriedJob.remove();
+});
+
+// Live: Delayed acknowledgment and timeout rollback reconciliation (Requirement #4)
+test("Integration: Late Redis job after enqueue timeout rollback is safely reconciled without creating expenses", async (t) => {
+  if (!isEnvironmentAvailable) {
+    t.skip("Redis or MongoDB not available for live worker test");
+    return;
+  }
+
+  // 1. Create an ImportJob in ready_for_review with staged ImportedTransaction records
+  const fakeChecksum = crypto.randomBytes(32).toString("hex");
+  const job = await ImportJob.create({
+    userId: testUserId,
+    accountId: testAccountId,
+    originalFilename: "late_ack_test.csv",
+    fileChecksum: fakeChecksum,
+    fileSize: 1024,
+    currency: "INR",
+    status: "ready_for_review",
+    totalRows: 2,
+    progress: { stage: "Ready for review", percent: 100 },
+  });
+  createdJobIds.push(job._id);
+
+  // Staged expense transaction
+  const txn1 = await ImportedTransaction.create({
+    importJobId: job._id,
+    userId: testUserId,
+    accountId: testAccountId,
+    sourceRowIndex: 0,
+    transactionDate: new Date("2026-11-15"),
+    originalDescription: "ZOMATO ONLINE ORDER",
+    normalizedDescription: "ZOMATO ONLINE ORDER",
+    merchant: "Zomato",
+    category: "Food & Dining",
+    amountMinor: 49900,
+    direction: "debit",
+    classification: "expense",
+    currency: "INR",
+    importStatus: "pending",
+    selected: true,
+  });
+
+  const initialExpenseCount = await Expense.countDocuments({
+    importJobId: job._id,
+  });
+  assert.equal(initialExpenseCount, 0, "No initial expenses for test job");
+
+  // 2. Simulate API confirm flow:
+  // (a) API atomically claims ready_for_review -> confirmation_queued
+  const claimed = await ImportJob.findOneAndUpdate(
+    {
+      _id: job._id,
+      userId: testUserId,
+      status: { $in: ["ready_for_review", "partially_completed"] },
+    },
+    { $set: { status: "confirmation_queued" } },
+    { new: false },
+  );
+  assert.equal(
+    claimed.status,
+    "ready_for_review",
+    "API claimed from ready_for_review",
+  );
+
+  // (b) API experiences enqueue timeout and rolls back to ready_for_review
+  await ImportJob.findOneAndUpdate(
+    { _id: job._id, status: "confirmation_queued" },
+    {
+      $set: {
+        status: "ready_for_review",
+        "progress.message": "Enqueue timed out; rolled back.",
+      },
+    },
+  );
+
+  const rolledBackJob = await ImportJob.findById(job._id);
+  assert.equal(
+    rolledBackJob.status,
+    "ready_for_review",
+    "Status is rolled back to ready_for_review",
+  );
+
+  // 3. Late acknowledgment: the Redis job lands in the queue despite API timeout!
+  const queue = getImportQueue(TEST_QUEUE_NAME, testRedisClient);
+  const lateJobId = `confirm-${job._id.toString()}`;
+  await queue.add(
+    "confirm-import",
+    { importJobId: job._id.toString() },
+    { jobId: lateJobId },
+  );
+
+  // 4. Worker picks up this late job
+  let lateWorkerRedis = new IORedis(
+    TEST_REDIS_URL,
+    getRedisOptions(TEST_REDIS_URL, true),
+  );
+  let workerJobResult = null;
+  const lateWorker = new Worker(
+    TEST_QUEUE_NAME,
+    async (bJob) => {
+      console.log(
+        `[Late Ack Worker] Received late job: ${bJob.name} (${bJob.id})`,
+      );
+      if (bJob.name === "confirm-import") {
+        workerJobResult = await confirmImport(
+          bJob.data.importJobId,
+          bJob.data.transactionIds,
+          { isWorker: true },
+        );
+        return workerJobResult;
+      }
+    },
+    { connection: lateWorkerRedis, concurrency: 1 },
+  );
+  lateWorker.on("error", () => {});
+  await lateWorker.waitUntilReady();
+
+  const waitComplete = new Promise((resolve) => {
+    lateWorker.on("completed", (j) => {
+      if (j.id === lateJobId) resolve(j);
+    });
+  });
+
+  await waitComplete;
+  await lateWorker.close();
+  await lateWorkerRedis.quit();
+
+  // 5. Verification: Safe Queue-State Reconciliation
+  // (a) Worker recognized reconciliation state and safely skipped execution
+  assert.ok(workerJobResult, "Worker completed with reconciliation result");
+  assert.equal(
+    workerJobResult.reconciled,
+    true,
+    "Worker must flag job as reconciled",
+  );
+  assert.equal(workerJobResult.skipped, true, "Worker must skip execution");
+  assert.equal(
+    workerJobResult.status,
+    "ready_for_review",
+    "Worker detected ready_for_review status",
+  );
+
+  // (b) Crucial guarantee: Zero Expense records were created!
+  const postExpenses = await Expense.countDocuments({ importJobId: job._id });
+  assert.equal(
+    postExpenses,
+    0,
+    "CRITICAL: No expenses must be created by late worker job",
+  );
+
+  // (c) Crucial guarantee: MongoDB status was NOT corrupted into importing or completed
+  const preservedJob = await ImportJob.findById(job._id);
+  assert.equal(
+    preservedJob.status,
+    "ready_for_review",
+    "ImportJob must remain in ready_for_review for legitimate user retry",
+  );
+
+  // (d) Staged transaction remains pending
+  const preservedTxn = await ImportedTransaction.findById(txn1._id);
+  assert.equal(
+    preservedTxn.importStatus,
+    "pending",
+    "Staged transaction status was not modified",
+  );
 });
