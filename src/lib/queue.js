@@ -47,10 +47,13 @@ export function getRedisOptions(
       hostname = undefined;
     }
 
+    const allowInsecureTls =
+      process.env.NODE_ENV !== "production" &&
+      process.env.REDIS_TLS_REJECT_UNAUTHORIZED === "false";
+
     tlsOptions = {
-      // Verified TLS certificates in production; rejectUnauthorized defaults to true
-      rejectUnauthorized:
-        process.env.REDIS_TLS_REJECT_UNAUTHORIZED === "false" ? false : true,
+      // Verified TLS certificates enforced in production; rejectUnauthorized cannot be disabled in production
+      rejectUnauthorized: !allowInsecureTls,
     };
     // RFC 6066: SNI servername must only be set for domain hostnames, not IP addresses
     if (hostname && !net.isIP(hostname)) {
@@ -303,8 +306,11 @@ export async function addConfirmJob(
   const queue = options.queue || getImportQueue(queueName, options.connection);
   if (!queue) return null;
   const timeoutMs = options.timeoutMs || 4000;
+  const confirmationToken = options.confirmationToken || null;
   try {
-    const jobId = `confirm-${importJobId}`;
+    const jobId = confirmationToken
+      ? `confirm-${importJobId}-${confirmationToken}`
+      : `confirm-${importJobId}`;
     const existingJob = await Promise.race([
       queue.getJob(jobId),
       new Promise((_, reject) =>
@@ -329,7 +335,7 @@ export async function addConfirmJob(
     let timeoutTimer = null;
     const addPromise = queue.add(
       "confirm-import",
-      { importJobId, transactionIds },
+      { importJobId, transactionIds, confirmationToken },
       { jobId },
     );
     const timeoutPromise = new Promise((_, reject) => {
