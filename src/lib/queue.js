@@ -1,12 +1,14 @@
 import { Queue } from "bullmq";
 import IORedis from "ioredis";
+import net from "node:net";
 
 /**
  * Centralized BullMQ queue setup for SpendSense
  * Supports production background worker and bounded API producer connections.
  */
 
-export const QUEUE_NAME = "statement-import-queue";
+export const DEFAULT_QUEUE_NAME = "statement-import-queue";
+export const QUEUE_NAME = process.env.QUEUE_NAME || DEFAULT_QUEUE_NAME;
 
 /**
  * Sanitize Redis URL for safe logging (removes credentials)
@@ -27,7 +29,7 @@ export function sanitizeRedisUrl(rawUrl) {
 
 /**
  * Parse Redis configuration options from URL.
- * Handles TLS (rediss://) and separation of producer vs worker settings.
+ * Handles verified TLS (rediss://) and separation of producer vs worker settings.
  */
 export function getRedisOptions(
   rawUrl = process.env.REDIS_URL,
@@ -35,6 +37,31 @@ export function getRedisOptions(
 ) {
   const url = rawUrl || "redis://localhost:6379";
   const isTls = url.startsWith("rediss://");
+
+  let tlsOptions = undefined;
+  if (isTls) {
+    let hostname;
+    try {
+      hostname = new URL(url).hostname;
+    } catch (_) {
+      hostname = undefined;
+    }
+
+    tlsOptions = {
+      // Verified TLS certificates in production; rejectUnauthorized defaults to true
+      rejectUnauthorized:
+        process.env.REDIS_TLS_REJECT_UNAUTHORIZED === "false" ? false : true,
+    };
+    // RFC 6066: SNI servername must only be set for domain hostnames, not IP addresses
+    if (hostname && !net.isIP(hostname)) {
+      tlsOptions.servername = hostname;
+    }
+    // Only configure custom CA if genuinely provided
+    const caCert = process.env.REDIS_CA_CERT || process.env.REDIS_TLS_CA;
+    if (caCert) {
+      tlsOptions.ca = [caCert];
+    }
+  }
 
   if (isWorker) {
     // Worker configuration: persistent connection, indefinite reconnect
@@ -44,7 +71,7 @@ export function getRedisOptions(
       retryStrategy(times) {
         return Math.min(times * 1000, 10000);
       },
-      ...(isTls ? { tls: { rejectUnauthorized: false } } : {}),
+      ...(tlsOptions ? { tls: tlsOptions } : {}),
     };
   }
 
@@ -62,7 +89,7 @@ export function getRedisOptions(
       }
       return Math.min(times * 300, 1000);
     },
-    ...(isTls ? { tls: { rejectUnauthorized: false } } : {}),
+    ...(tlsOptions ? { tls: tlsOptions } : {}),
   };
 }
 
@@ -95,15 +122,14 @@ export function isSyncAllowed(req) {
   }
 }
 
-let importQueue = null;
+const queues = new Map();
 let producerRedisConnection = null;
 
-export function getProducerRedisConnection() {
-  if (!producerRedisConnection && process.env.REDIS_URL) {
-    const url = process.env.REDIS_URL;
-    const options = getRedisOptions(url, false);
+export function getProducerRedisConnection(redisUrl = process.env.REDIS_URL) {
+  if (!producerRedisConnection && redisUrl) {
+    const options = getRedisOptions(redisUrl, false);
     try {
-      producerRedisConnection = new IORedis(url, options);
+      producerRedisConnection = new IORedis(redisUrl, options);
       producerRedisConnection.on("error", (err) => {
         // Quietly log to avoid crashing serverless functions
         console.warn("[Queue] Producer Redis warning:", err.message);
@@ -115,29 +141,37 @@ export function getProducerRedisConnection() {
   return producerRedisConnection;
 }
 
-export function getImportQueue() {
-  if (!importQueue && process.env.REDIS_URL) {
-    const connection = getProducerRedisConnection();
-    if (connection) {
-      try {
-        importQueue = new Queue(QUEUE_NAME, {
-          connection,
-          defaultJobOptions: {
-            attempts: 3,
-            backoff: {
-              type: "exponential",
-              delay: 3000,
-            },
-            removeOnComplete: 100,
-            removeOnFail: 50,
+export function getImportQueue(queueName = QUEUE_NAME, connection = null) {
+  const qName = queueName || QUEUE_NAME;
+  if (queues.has(qName)) {
+    return queues.get(qName);
+  }
+
+  const redisConn = connection || getProducerRedisConnection();
+  if (redisConn) {
+    try {
+      const queue = new Queue(qName, {
+        connection: redisConn,
+        defaultJobOptions: {
+          attempts: 3,
+          backoff: {
+            type: "exponential",
+            delay: 3000,
           },
-        });
-      } catch (err) {
-        console.warn("[Queue] Could not create BullMQ Queue:", err.message);
-      }
+          removeOnComplete: 100,
+          removeOnFail: 50,
+        },
+      });
+      queues.set(qName, queue);
+      return queue;
+    } catch (err) {
+      console.warn(
+        `[Queue] Could not create BullMQ Queue (${qName}):`,
+        err.message,
+      );
     }
   }
-  return importQueue;
+  return null;
 }
 
 /**
@@ -177,11 +211,13 @@ export async function isQueueAvailable() {
 
 /**
  * Enqueue a statement processing job with deterministic jobId.
- * Handles previously failed/completed jobs and bounded timeout.
+ * Handles previously failed/completed jobs, bounded timeout, and late reconciliation.
  */
-export async function addImportJob(importJobId) {
-  const queue = getImportQueue();
+export async function addImportJob(importJobId, options = {}) {
+  const queueName = options.queueName || QUEUE_NAME;
+  const queue = options.queue || getImportQueue(queueName, options.connection);
   if (!queue) return null;
+  const timeoutMs = options.timeoutMs || 4000;
   try {
     const jobId = `process-${importJobId}`;
     const existingJob = await Promise.race([
@@ -204,12 +240,47 @@ export async function addImportJob(importJobId) {
       }
     }
 
-    return await Promise.race([
-      queue.add("process-import", { importJobId }, { jobId }),
-      new Promise((_, reject) =>
-        setTimeout(() => reject(new Error("Queue add timeout")), 4000),
-      ),
-    ]);
+    let timedOut = false;
+    let timeoutTimer = null;
+    const addPromise = queue.add("process-import", { importJobId }, { jobId });
+    const timeoutPromise = new Promise((_, reject) => {
+      timeoutTimer = setTimeout(() => {
+        timedOut = true;
+        reject(new Error("Queue add timeout"));
+      }, timeoutMs);
+    });
+
+    try {
+      const job = await Promise.race([addPromise, timeoutPromise]);
+      clearTimeout(timeoutTimer);
+      return job;
+    } catch (raceErr) {
+      clearTimeout(timeoutTimer);
+      if (timedOut) {
+        // Late-acknowledgment reconciliation: cancel orphaned job if it lands
+        addPromise
+          .then(async (lateJob) => {
+            if (lateJob) {
+              try {
+                const state = await lateJob.getState();
+                if (state === "waiting" || state === "delayed") {
+                  await lateJob.remove();
+                  console.warn(
+                    `[Queue] Reconciled late job ${lateJob.id}: removed from ${state} state after timeout.`,
+                  );
+                }
+              } catch (cleanErr) {
+                console.warn(
+                  `[Queue] Could not clean late job ${lateJob.id}:`,
+                  cleanErr.message,
+                );
+              }
+            }
+          })
+          .catch(() => {});
+      }
+      throw raceErr;
+    }
   } catch (err) {
     console.warn(
       `[Queue] Failed to enqueue process-import for ${importJobId}:`,
@@ -221,11 +292,17 @@ export async function addImportJob(importJobId) {
 
 /**
  * Enqueue an import confirmation job with deterministic jobId.
- * Handles previously failed/completed jobs and bounded timeout.
+ * Handles previously failed/completed jobs, bounded timeout, and late reconciliation.
  */
-export async function addConfirmJob(importJobId, transactionIds = null) {
-  const queue = getImportQueue();
+export async function addConfirmJob(
+  importJobId,
+  transactionIds = null,
+  options = {},
+) {
+  const queueName = options.queueName || QUEUE_NAME;
+  const queue = options.queue || getImportQueue(queueName, options.connection);
   if (!queue) return null;
+  const timeoutMs = options.timeoutMs || 4000;
   try {
     const jobId = `confirm-${importJobId}`;
     const existingJob = await Promise.race([
@@ -248,12 +325,51 @@ export async function addConfirmJob(importJobId, transactionIds = null) {
       }
     }
 
-    return await Promise.race([
-      queue.add("confirm-import", { importJobId, transactionIds }, { jobId }),
-      new Promise((_, reject) =>
-        setTimeout(() => reject(new Error("Queue add timeout")), 4000),
-      ),
-    ]);
+    let timedOut = false;
+    let timeoutTimer = null;
+    const addPromise = queue.add(
+      "confirm-import",
+      { importJobId, transactionIds },
+      { jobId },
+    );
+    const timeoutPromise = new Promise((_, reject) => {
+      timeoutTimer = setTimeout(() => {
+        timedOut = true;
+        reject(new Error("Queue add timeout"));
+      }, timeoutMs);
+    });
+
+    try {
+      const job = await Promise.race([addPromise, timeoutPromise]);
+      clearTimeout(timeoutTimer);
+      return job;
+    } catch (raceErr) {
+      clearTimeout(timeoutTimer);
+      if (timedOut) {
+        // Late-acknowledgment reconciliation: cancel orphaned job if it lands
+        addPromise
+          .then(async (lateJob) => {
+            if (lateJob) {
+              try {
+                const state = await lateJob.getState();
+                if (state === "waiting" || state === "delayed") {
+                  await lateJob.remove();
+                  console.warn(
+                    `[Queue] Reconciled late job ${lateJob.id}: removed from ${state} state after timeout.`,
+                  );
+                }
+              } catch (cleanErr) {
+                console.warn(
+                  `[Queue] Could not clean late job ${lateJob.id}:`,
+                  cleanErr.message,
+                );
+              }
+            }
+          })
+          .catch(() => {});
+      }
+      throw raceErr;
+    }
   } catch (err) {
     console.warn(
       `[Queue] Failed to enqueue confirm-import for ${importJobId}:`,
@@ -266,13 +382,21 @@ export async function addConfirmJob(importJobId, transactionIds = null) {
 /**
  * Close queue and producer Redis connections gracefully.
  */
-export async function closeQueue() {
-  if (importQueue) {
-    try {
-      await importQueue.close();
-    } catch (_) {}
-    importQueue = null;
+export async function closeQueue(queueName = null) {
+  if (queueName) {
+    const q = queues.get(queueName);
+    if (q) {
+      await q.close().catch(() => {});
+      queues.delete(queueName);
+    }
+    return;
   }
+  for (const [name, q] of queues.entries()) {
+    try {
+      await q.close();
+    } catch (_) {}
+  }
+  queues.clear();
   if (producerRedisConnection) {
     try {
       await producerRedisConnection.quit();
@@ -280,3 +404,4 @@ export async function closeQueue() {
     producerRedisConnection = null;
   }
 }
+
