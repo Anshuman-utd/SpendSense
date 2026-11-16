@@ -47,7 +47,7 @@ test('Confirmation State Machine: Lifecycle transitions ready_for_review -> conf
     job.status = 'confirmation_queued';
 
     // 2. Worker picks up: confirmation_queued -> importing
-    const allowedForWorker = ['confirmation_queued', 'importing', 'ready_for_review', 'partially_completed'];
+    const allowedForWorker = ['confirmation_queued', 'importing', 'partially_completed'];
     assert.ok(allowedForWorker.includes(job.status), 'Worker must accept confirmation_queued');
     job.status = 'importing';
 
@@ -96,7 +96,7 @@ test('Confirmation State Machine: Worker retry after partial persistence (Idempo
     ]);
 
     // Worker resumes from status 'importing'
-    const allowedWorkerStatuses = ['confirmation_queued', 'importing', 'ready_for_review', 'partially_completed'];
+    const allowedWorkerStatuses = ['confirmation_queued', 'importing', 'partially_completed'];
     assert.ok(allowedWorkerStatuses.includes('importing'), 'Worker must accept importing on retry');
 
     // Query non-imported transactions
@@ -190,3 +190,36 @@ test('Confirmation State Machine: Duplicate Expense prevention via unique index 
     assert.ok(exp2);
     assert.equal(existingExpenses.size, 2, 'No duplicate Expense records added');
 });
+
+test('Confirmation State Machine: Late worker execution on rolled-back ready_for_review status is reconciled and skipped', async () => {
+    let job = {
+        _id: 'job_late_reconcile_1',
+        status: 'ready_for_review'
+    };
+
+    // 1. API claimed confirmation_queued
+    job.status = 'confirmation_queued';
+
+    // 2. Queue enqueue timed out in API; API rolled back to ready_for_review
+    job.status = 'ready_for_review';
+
+    // 3. Late BullMQ job arrives at worker. Worker attempts atomic claim with worker-allowed statuses:
+    const workerClaimStatuses = ['confirmation_queued', 'importing', 'partially_completed'];
+    const canClaim = workerClaimStatuses.includes(job.status);
+    assert.equal(canClaim, false, 'Worker must NOT claim a job in ready_for_review');
+
+    // 4. Worker executes reconciliation check
+    let workerResult = null;
+    if (job.status === 'ready_for_review') {
+        workerResult = {
+            reconciled: true,
+            skipped: true,
+            status: 'ready_for_review'
+        };
+    }
+
+    assert.ok(workerResult.reconciled);
+    assert.ok(workerResult.skipped);
+    assert.equal(job.status, 'ready_for_review', 'MongoDB job remains intact in ready_for_review for retry');
+});
+

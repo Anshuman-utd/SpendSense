@@ -17,7 +17,10 @@ import { normalizeTransactions } from "./transactionNormalizer.js";
 /**
  * Main background pipeline to process an uploaded import job.
  */
-export async function processImportJob(importJobId) {
+export async function processImportJob(
+  importJobId,
+  { isWorker = false } = {},
+) {
   await dbConnect();
 
   const job = await ImportJob.findById(importJobId);
@@ -26,6 +29,14 @@ export async function processImportJob(importJobId) {
   }
 
   if (job.status === "completed" || job.status === "cancelled") {
+    return job;
+  }
+
+  // Reconciliation: If worker receives a job that was already marked failed by API timeout, skip execution
+  if (isWorker && job.status === "failed") {
+    console.warn(
+      `[ImportService] Reconciliation: Import job ${importJobId} is in "failed" state. Worker ignoring late process job.`,
+    );
     return job;
   }
 
@@ -233,25 +244,27 @@ export async function processImportJob(importJobId) {
 
 /**
  * Confirm selected transactions and create Expense records.
- * Uses atomic state transitions, idempotent database writes, and cleans up raw files upon completion.
+ * Uses atomic state transitions, idempotent database writes, and reconciles late worker jobs.
  */
 export async function confirmImport(
   importJobId,
   selectedTransactionIds = null,
+  { isWorker = false } = {},
 ) {
   await dbConnect();
 
   // 1. Atomic claim to 'importing' status (Requirements #2, #3, #5, #6)
+  // For background workers: do NOT claim ready_for_review. Worker jobs are only valid
+  // from confirmation_queued, importing, or partially_completed.
+  const claimableStatuses = isWorker
+    ? ['confirmation_queued', 'importing', 'partially_completed']
+    : ['confirmation_queued', 'importing', 'ready_for_review', 'partially_completed'];
+
   const job = await ImportJob.findOneAndUpdate(
     {
       _id: importJobId,
       status: {
-        $in: [
-          'confirmation_queued',
-          'importing',
-          'ready_for_review',
-          'partially_completed',
-        ],
+        $in: claimableStatuses,
       },
     },
     {
@@ -276,6 +289,29 @@ export async function confirmImport(
         skippedCount: 0,
         failedCount: 0,
         alreadyCompleted: true,
+      };
+    }
+    // Reconciliation guard: If worker picks up a late Redis job where MongoDB was
+    // rolled back to ready_for_review (or cancelled/failed), do NOT process!
+    if (isWorker && existing.status === 'ready_for_review') {
+      console.warn(
+        `[ImportService] Reconciliation: Import job ${importJobId} is in "${existing.status}" (enqueue timed out or rolled back). Worker ignoring late confirmation job.`,
+      );
+      return {
+        reconciled: true,
+        skipped: true,
+        status: 'ready_for_review',
+        message: 'Job status was rolled back to ready_for_review; worker skipped execution.',
+      };
+    }
+    if (isWorker && (existing.status === 'failed' || existing.status === 'cancelled')) {
+      console.warn(
+        `[ImportService] Reconciliation: Import job ${importJobId} is "${existing.status}". Worker ignoring late confirmation job.`,
+      );
+      return {
+        reconciled: true,
+        skipped: true,
+        status: existing.status,
       };
     }
     throw new Error(`Job cannot be confirmed from status "${existing.status}"`);

@@ -53,13 +53,13 @@ const worker = new Worker(
     if (job.name === "process-import") {
       const { importJobId } = job.data;
       if (!importJobId) throw new Error("Missing importJobId in job payload");
-      return await processImportJob(importJobId);
+      return await processImportJob(importJobId, { isWorker: true });
     }
 
     if (job.name === "confirm-import") {
       const { importJobId, transactionIds } = job.data;
       if (!importJobId) throw new Error("Missing importJobId in job payload");
-      return await confirmImport(importJobId, transactionIds);
+      return await confirmImport(importJobId, transactionIds, { isWorker: true });
     }
 
     throw new Error(`Unknown job type: "${job.name}"`);
