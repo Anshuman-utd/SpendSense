@@ -43,7 +43,7 @@ export default function ImportsPage() {
     // Polling for processing status
     useEffect(() => {
         if (!activeJob) return;
-        const needsPolling = ['uploaded', 'processing', 'importing'].includes(activeJob.status);
+        const needsPolling = ['uploaded', 'processing', 'confirmation_queued', 'importing'].includes(activeJob.status);
         if (!needsPolling) return;
 
         const interval = setInterval(async () => {

@@ -80,14 +80,15 @@ export async function isQueueAvailable() {
 }
 
 /**
- * Enqueue a statement processing job.
+ * Enqueue a statement processing job with deterministic jobId.
  * Returns BullMQ Job or null if queue is unavailable.
  */
 export async function addImportJob(importJobId) {
     const queue = getImportQueue();
     if (!queue) return null;
     try {
-        return await queue.add('process-import', { importJobId });
+        const jobId = `process-${importJobId}`;
+        return await queue.add('process-import', { importJobId }, { jobId });
     } catch (err) {
         console.warn(`[Queue] Failed to enqueue process-import for ${importJobId}:`, err.message);
         return null;
@@ -95,13 +96,15 @@ export async function addImportJob(importJobId) {
 }
 
 /**
- * Enqueue an import confirmation job.
+ * Enqueue an import confirmation job with deterministic jobId.
+ * Prevents multiple active confirmation jobs for the same ImportJob.
  */
 export async function addConfirmJob(importJobId, transactionIds = null) {
     const queue = getImportQueue();
     if (!queue) return null;
     try {
-        return await queue.add('confirm-import', { importJobId, transactionIds });
+        const jobId = `confirm-${importJobId}`;
+        return await queue.add('confirm-import', { importJobId, transactionIds }, { jobId });
     } catch (err) {
         console.warn(`[Queue] Failed to enqueue confirm-import for ${importJobId}:`, err.message);
         return null;

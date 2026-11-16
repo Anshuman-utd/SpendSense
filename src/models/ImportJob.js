@@ -40,6 +40,7 @@ const ImportJobSchema = new Schema({
             'mapping_required',
             'processing',
             'ready_for_review',
+            'confirmation_queued',
             'importing',
             'completed',
             'partially_completed',
