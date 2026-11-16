@@ -329,6 +329,106 @@ Add these to your `.env.local` or production environment:
 
 ---
 
+## 🚢 Vercel + Railway Production Deployment Guide
+
+SpendSense uses a decoupled architecture designed for high availability and zero dropped jobs:
+- **Vercel:** Hosts the Next.js frontend and App Router API endpoints (Serverless). Producers enqueue statement parsing and confirmation jobs to Redis with bounded timeouts (`connectTimeout: 5000ms`, `maxRetriesPerRequest: 1`) so serverless functions never hang.
+- **Railway:** Hosts the long-running BullMQ background worker (`src/workers/importWorker.js` via `Dockerfile.worker`). Workers maintain persistent connections with exponential reconnection backoff and `maxRetriesPerRequest: null`.
+- **Redis (Upstash / Railway / Redis Cloud):** Serves as the central job queue broker (`statement-import-queue`) bridging Vercel and Railway with full TLS (`rediss://`) support.
+- **MongoDB Atlas:** Houses application documents, user accounts, and stages raw statement files in MongoDB GridFS with automatic post-import cleanup.
+
+### 1. Vercel Environment Variables (Web Application)
+
+Configure these in **Vercel Project Settings → Environment Variables**:
+
+| Variable | Required | Description | Example |
+|---|---|---|---|
+| `NODE_ENV` | Yes | Application environment | `production` |
+| `MONGODB_URI` | Yes | MongoDB Atlas connection string | `mongodb+srv://user:pass@cluster.mongodb.net/?appName=SpendSense` |
+| `NEXTAUTH_URL` | Yes | Production URL | `https://spendsense.vercel.app` |
+| `NEXTAUTH_SECRET` | Yes | Cryptographic JWT secret | `openssl rand -base64 32` |
+| `GOOGLE_CLIENT_ID` | Optional | Google OAuth client ID | `...apps.googleusercontent.com` |
+| `GOOGLE_CLIENT_SECRET` | Optional | Google OAuth client secret | `GOCSPX-...` |
+| `GROQ_API_KEY` | Yes | Groq AI API key | `gsk_...` |
+| `GROQ_TEXT_MODEL` | Yes | Text & transaction model | `openai/gpt-oss-120b` |
+| `GROQ_VISION_MODEL` | Yes | Receipt scanner model | `qwen/qwen3.8-27b` |
+| `REDIS_URL` | Yes | Production Redis URL (with TLS) | `rediss://default:password@host:port` |
+| `CLOUDINARY_CLOUD_NAME` | Yes | Cloudinary asset cloud name | `your_cloud_name` |
+| `CLOUDINARY_API_KEY` | Yes | Cloudinary API key | `1234567890` |
+| `CLOUDINARY_API_SECRET` | Yes | Cloudinary API secret | `your_api_secret` |
+
+*Note: In production (`NODE_ENV=production`), synchronous import overrides (`?sync=true`, `SYNC_PROCESSING`) are strictly disabled. All imports are routed through BullMQ.*
+
+---
+
+### 2. Railway Environment Variables (Background Worker)
+
+Configure these in **Railway Service → Variables** (no physical `.env` file needed):
+
+| Variable | Required | Description | Example |
+|---|---|---|---|
+| `NODE_ENV` | Yes | Runtime environment | `production` |
+| `REDIS_URL` | Yes | Shared Redis URL (matching Vercel) | `rediss://default:password@host:port` |
+| `MONGODB_URI` | Yes | Shared MongoDB Atlas connection string | `mongodb+srv://user:pass@cluster.mongodb.net/?appName=SpendSense` |
+| `GROQ_API_KEY` | Yes | Groq AI API key | `gsk_...` |
+| `GROQ_TEXT_MODEL` | Yes | Groq text model | `openai/gpt-oss-120b` |
+
+---
+
+### 3. Redis Endpoint Requirements for Both Services
+
+- **Unified Queue Endpoint:** Both Vercel and Railway must point to the exact same `REDIS_URL` so that jobs enqueued by Vercel are consumed by the Railway worker.
+- **TLS Security (`rediss://`):**
+  - If using Upstash or external cloud Redis, the connection string protocol must be `rediss://`.
+  - SpendSense's Redis connection manager (`src/lib/queue.js` and `src/workers/importWorker.js`) automatically detects `rediss://` and attaches `{ tls: { rejectUnauthorized: false } }`.
+- **Sanitized Logging:** Redis URLs containing embedded passwords (`redis://user:pass@host`) are automatically redacted in worker logs to prevent credential leakage.
+
+---
+
+### 4. Railway Build & Start Settings
+
+#### Option A: Dockerfile Deployment (Recommended)
+1. In your Railway service settings, set **Dockerfile Path** to: `Dockerfile.worker`
+2. Set **Context** to: `/`
+3. Railway will build the lightweight image based on `node:22-alpine` using `.dockerignore` (which strictly excludes credentials and `.env` files).
+4. CMD is pre-configured to: `["node", "src/workers/importWorker.js"]`.
+
+#### Option B: Nixpacks / Node Buildpack
+1. **Build Command:** `npm ci --omit=dev`
+2. **Start Command:** `node src/workers/importWorker.js` (or `npm run worker`)
+
+---
+
+### 5. Deployment Verification Procedure
+
+1. **Verify Redis Connectivity:**
+   Ensure your Redis instance is reachable and accepts TLS connections.
+2. **Verify Worker Startup on Railway:**
+   Inspect the Railway deployment logs. You should observe:
+   ```text
+   --------------------------------------------------
+    SpendSense — Smart Statement Ingestion Worker
+   --------------------------------------------------
+   [Worker] Connecting to Redis at: rediss://***:***@host:port
+   [Worker] Connected to Redis successfully.
+   [Worker] Connected to MongoDB database.
+   [Worker] Worker is active and listening on queue "statement-import-queue".
+   ```
+3. **Verify Vercel Web Deployment:**
+   - Navigate to your deployed application (`https://your-domain.vercel.app/imports`).
+   - Upload a sample CSV statement (`tests/fixtures/sample_statement.csv`).
+   - Observe the live polling progress: `Reading statement` → `Parsing` → `Categorizing` → `Ready for review`.
+   - Railway worker logs will output:
+     ```text
+     [Worker] Starting job "process-import" (ID: process-<jobId>)
+     [Worker] Job "process-import" (ID: process-<jobId>) completed successfully.
+     ```
+   - Customize classifications or categories in the review table and click **Confirm & Import**.
+   - Observe the confirmation lifecycle: `confirmation_queued` → `importing` → `completed`.
+   - Verify that transactions immediately appear in the **Expenses** table and analytics charts.
+
+---
+
 ## 🚢 Deployment & Architecture Guidance
 
 ### 1. Web Application (Next.js & API Handlers)
