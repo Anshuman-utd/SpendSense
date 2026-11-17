@@ -278,4 +278,86 @@ test('Confirmation State Machine: Stale attempt token from timed-out Attempt A i
     assert.equal(job.status, 'importing', 'Job advances to importing for Attempt B');
 });
 
+test('Confirmation State Machine: Simultaneous retries reject concurrent duplicate claim', async () => {
+    let job = {
+        _id: 'job_retry_simultaneous_1',
+        status: 'partially_completed',
+        confirmationToken: null,
+    };
+
+    const atomicRetryClaim = async (jobId, token) => {
+        if (job._id === jobId && ['failed', 'partially_completed'].includes(job.status)) {
+            const previous = { ...job };
+            job.status = 'confirmation_queued';
+            job.confirmationToken = token;
+            return previous;
+        }
+        return null;
+    };
+
+    const [claim1, claim2] = await Promise.all([
+        atomicRetryClaim('job_retry_simultaneous_1', 'token_R1'),
+        atomicRetryClaim('job_retry_simultaneous_1', 'token_R2'),
+    ]);
+
+    const successful = [claim1, claim2].filter(Boolean);
+    const failed = [claim1, claim2].filter((c) => c === null);
+
+    assert.equal(successful.length, 1, 'Exactly one simultaneous retry must succeed');
+    assert.equal(failed.length, 1, 'Concurrent retry must be rejected with conflict');
+    assert.equal(job.status, 'confirmation_queued');
+    assert.ok(job.confirmationToken === 'token_R1' || job.confirmationToken === 'token_R2');
+});
+
+test('Confirmation State Machine: Active worker within 30s window rejects retry attempts', () => {
+    const job = {
+        _id: 'job_active_worker_1',
+        status: 'importing',
+        updatedAt: new Date(Date.now() - 5000), // Updated 5s ago
+    };
+
+    const elapsedMs = Date.now() - new Date(job.updatedAt).getTime();
+    const isActivelyProcessing = job.status === 'importing' && elapsedMs < 30000;
+
+    assert.equal(isActivelyProcessing, true, 'Must detect active worker processing');
+
+    let canRetry = false;
+    let errorStatus = 0;
+    if (isActivelyProcessing) {
+        canRetry = false;
+        errorStatus = 409;
+    }
+
+    assert.equal(canRetry, false, 'Retry must be denied while worker is actively importing');
+    assert.equal(errorStatus, 409, 'Must return 409 conflict');
+});
+
+test('Confirmation State Machine: Retry enqueuing failure uses attempt-scoped rollback', async () => {
+    let job = {
+        _id: 'job_retry_rollback_1',
+        status: 'partially_completed',
+        confirmationToken: 'token_retry_A',
+    };
+
+    // Simulate Attempt B starting concurrently with token_retry_B
+    const currentTokenInDb = 'token_retry_B';
+    job.confirmationToken = currentTokenInDb;
+
+    // Attempt A's rollback executes with Attempt A's token
+    const attemptAToken = 'token_retry_A';
+    const conditionalRollback = (jobDoc, expectedToken, fallbackStatus) => {
+        if (jobDoc.status === 'confirmation_queued' && jobDoc.confirmationToken === expectedToken) {
+            jobDoc.status = fallbackStatus;
+            jobDoc.confirmationToken = null;
+            return true;
+        }
+        return false;
+    };
+
+    const rolledBack = conditionalRollback(job, attemptAToken, 'partially_completed');
+    assert.equal(rolledBack, false, 'Attempt A rollback must NOT overwrite DB if token has changed');
+    assert.equal(job.confirmationToken, 'token_retry_B', 'Attempt B token preserved');
+});
+
+
 

@@ -267,9 +267,15 @@ export async function confirmImport(
     },
   };
 
-  // If worker is running a specific confirmation attempt, scope claim to that attempt's token
-  if (isWorker && confirmationToken) {
-    claimFilter.confirmationToken = confirmationToken;
+  // If worker is running, enforce token validation:
+  // - A tokenized worker job must match the DB confirmationToken.
+  // - An untokenized legacy job cannot claim a job that has an active confirmationToken in the DB.
+  if (isWorker) {
+    if (confirmationToken) {
+      claimFilter.confirmationToken = confirmationToken;
+    } else {
+      claimFilter.confirmationToken = null;
+    }
   }
 
   const job = await ImportJob.findOneAndUpdate(

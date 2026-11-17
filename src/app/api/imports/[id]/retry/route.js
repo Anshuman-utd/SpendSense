@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
+import crypto from "crypto";
 import mongoose from "mongoose";
 import dbConnect from "@/lib/db";
 import ImportJob from "@/models/ImportJob";
@@ -52,8 +53,11 @@ export async function POST(req, { params }) {
       );
     }
 
-    // Concurrency safeguard: If job is currently 'importing', ensure it is not actively being modified by a worker
-    if (job.status === "importing" && job.updatedAt) {
+    // Concurrency safeguard: Prevent retries from reclaiming an actively queued or executing job
+    if (
+      (job.status === "importing" || job.status === "confirmation_queued") &&
+      job.updatedAt
+    ) {
       const elapsedSinceUpdateMs =
         Date.now() - new Date(job.updatedAt).getTime();
       if (elapsedSinceUpdateMs < 30000) {
@@ -78,21 +82,25 @@ export async function POST(req, { params }) {
 
     if (hasStagedTransactions) {
       // Staged transactions already exist: retry confirmation to preserve user selections & edits
+      const confirmationToken = crypto.randomUUID();
+      const stuckCutoff = new Date(Date.now() - 30000);
+
       const claimed = await ImportJob.findOneAndUpdate(
         {
           _id: id,
-          status: {
-            $in: [
-              "failed",
-              "partially_completed",
-              "importing",
-              "confirmation_queued",
-            ],
-          },
+          userId: session.user.id,
+          $or: [
+            { status: { $in: ["failed", "partially_completed"] } },
+            {
+              status: { $in: ["confirmation_queued", "importing"] },
+              updatedAt: { $lt: stuckCutoff },
+            },
+          ],
         },
         {
           $set: {
             status: "confirmation_queued",
+            confirmationToken,
             progress: {
               stage: "Confirmation queued",
               percent: 5,
@@ -101,27 +109,41 @@ export async function POST(req, { params }) {
             errorSummary: [],
           },
         },
-        { new: true },
+        { new: false }, // return original state to allow rollback
       );
 
       if (!claimed) {
         return NextResponse.json(
-          { success: false, error: "Job is already being processed." },
+          {
+            success: false,
+            error: "Job is already being processed or not in a retryable state.",
+          },
           { status: 409 },
         );
       }
 
-      const queued = await addConfirmJob(job._id.toString());
+      // Enqueue BullMQ job with deterministic attempt-scoped confirmation token
+      const queued = await addConfirmJob(job._id.toString(), null, {
+        confirmationToken,
+      });
+
       if (queued) {
         return NextResponse.json({
           success: true,
           message: "Confirmation retry queued",
-          data: claimed,
+          data: {
+            queued: true,
+            status: "confirmation_queued",
+            jobId: job._id.toString(),
+            confirmationToken,
+          },
         });
       }
 
       if (isSyncRequested) {
-        const result = await confirmImport(job._id.toString());
+        const result = await confirmImport(job._id.toString(), null, {
+          confirmationToken,
+        });
         return NextResponse.json({
           success: true,
           message: "Confirmation completed synchronously",
@@ -129,13 +151,23 @@ export async function POST(req, { params }) {
           mode: "synchronous",
         });
       } else {
-        await ImportJob.findByIdAndUpdate(job._id, {
-          status: "ready_for_review",
-          "progress.stage": "Ready for review",
-          "progress.percent": 100,
-          "progress.message":
-            "Queue unavailable. Recovered to ready for review.",
-        });
+        // Attempt-token-scoped rollback when enqueueing fails
+        await ImportJob.findOneAndUpdate(
+          { _id: id, status: "confirmation_queued", confirmationToken },
+          {
+            $set: {
+              status: claimed.status,
+              confirmationToken: null,
+              progress: {
+                stage: "Ready for review",
+                percent: 100,
+                message:
+                  "Queue unavailable. Recovered to previous eligible state.",
+              },
+            },
+          },
+        );
+
         return NextResponse.json(
           {
             success: false,
