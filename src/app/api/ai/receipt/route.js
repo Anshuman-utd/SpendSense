@@ -1,10 +1,10 @@
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
-import { GoogleGenerativeAI } from '@google/generative-ai';
 import cloudinary from '@/lib/cloudinary';
 import { authOptions } from '../../auth/[...nextauth]/route';
 import Expense from '@/models/Expense';
 import connectDB from '@/lib/db';
+import { extractReceiptDetails } from '@/lib/groq';
 
 // Helper to convert file to buffer for Cloudinary
 async function uploadToCloudinary(buffer) {
@@ -48,55 +48,31 @@ export async function POST(req) {
         const uploadResult = await uploadToCloudinary(buffer);
         const imageUrl = uploadResult.secure_url;
 
-        // 2. Send to Google Gemini
-        const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
-        const model = genAI.getGenerativeModel({ model: "gemini-flash-latest" });
+        // 2. Send to Groq Vision
+        const extractedData = await extractReceiptDetails({
+            base64Image,
+            mimeType,
+            imageUrl
+        });
 
-        const prompt = `
-      Extract expense details from this receipt.
-      Return a JSON object with:
-      - merchant (string): Name of the merchant/store
-      - amount (number): Total amount (just the number)
-      - currency (string): Currency code (e.g., INR, USD)
-      - category (string): Best fit category (Food, Transport, Entertainment, Shopping, Utilities, Health, Other)
-      - date (string): Date in YYYY-MM-DD format
-      - description (string): Short description of items
-
-      If it's not a receipt, return { "error": "not_a_receipt" }.
-    `;
-
-        const result = await model.generateContent([
-            prompt,
-            {
-                inlineData: {
-                    data: base64Image,
-                    mimeType: mimeType
-                }
-            }
-        ]);
-
-        const response = await result.response;
-        const text = response.text();
-        const cleanContent = text.replace(/```json/g, '').replace(/```/g, '').trim();
-        const extractedData = JSON.parse(cleanContent);
-
-        if (extractedData.error) {
+        if (!extractedData || extractedData.error) {
             return NextResponse.json({ error: 'Could not process receipt. Is this a valid receipt?' }, { status: 400 });
         }
 
         // 3. Save to MongoDB
-        // Default to today if date missing
-        const expenseDate = extractedData.date || new Date().toISOString().split('T')[0];
+        const expenseDate = extractedData.date ? new Date(extractedData.date) : new Date();
+        const amount = typeof extractedData.amount === 'number' ? extractedData.amount : parseFloat(extractedData.amount || '0');
 
         const newExpense = await Expense.create({
-            userId: session.user.id, // Ensure session.user.id is available from next-auth session callback
-            title: extractedData.merchant || extractedData.description || 'Unknown Expense',
-            description: extractedData.description || 'Receipt Scan',
-            amount: extractedData.amount,
+            userId: session.user.id,
+            merchant: extractedData.merchant || 'Unknown Merchant',
+            description: extractedData.description || extractedData.merchant || 'Receipt Scan',
+            amount: isNaN(amount) ? 0 : amount,
             category: extractedData.category || 'Other',
             date: expenseDate,
             receiptUrl: imageUrl,
-            paymentMethod: 'Other'
+            paymentMethod: 'Other',
+            source: 'receipt_scan'
         });
 
         return NextResponse.json({
@@ -106,7 +82,7 @@ export async function POST(req) {
         });
 
     } catch (error) {
-        console.error('Receipt Scan Error:', error);
+        console.error('Receipt Scan Error (Groq):', error);
         return NextResponse.json({ success: false, error: error.message || 'Processing failed' }, { status: 500 });
     }
 }

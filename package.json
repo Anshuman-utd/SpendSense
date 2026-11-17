@@ -1,24 +1,31 @@
 {
   "name": "spendsense",
   "version": "0.1.0",
+  "type": "module",
   "private": true,
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
+    "worker": "node src/workers/importWorker.js",
+    "worker:dev": "node --env-file=.env src/workers/importWorker.js",
+    "test": "node --test tests/**/*.test.js",
+    "test:integration": "node --env-file=.env --test tests/integration_worker_pipeline.test.js",
     "lint": "biome check",
     "format": "biome format --write"
   },
   "dependencies": {
     "@auth/mongodb-adapter": "^3.11.1",
-    "@google/generative-ai": "^0.24.1",
     "@headlessui/react": "^2.2.9",
     "@heroicons/react": "^2.2.0",
     "axios": "^1.13.2",
     "bcryptjs": "^3.0.3",
+    "bullmq": "^6.7.6",
     "cloudinary": "^2.8.0",
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",
+    "groq-sdk": "^1.6.0",
+    "ioredis": "^6.0.0",
     "jspdf": "^3.0.4",
     "mongodb": "^6.21.0",
     "mongoose": "^9.0.2",
@@ -29,6 +36,7 @@
     "react-dom": "19.2.3",
     "react-hook-form": "^7.69.0",
     "recharts": "^3.6.0",
+    "zod": "^4.6.7",
     "zustand": "^5.0.9"
   },
   "devDependencies": {

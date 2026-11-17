@@ -10,29 +10,31 @@ export default function CategoryPieChart({ data }) {
   }
 
   return (
-    <div className="w-full h-full min-h-[300px]">
+    <div className="w-full h-full min-h-[300px] flex flex-col">
       <h3 className="text-lg font-semibold text-white mb-4">Expenses by Category</h3>
-      <ResponsiveContainer width="100%" height="80%">
-        <PieChart>
-          <Pie
-            data={data}
-            cx="50%"
-            cy="50%"
-            innerRadius={60}
-            outerRadius={80}
-            paddingAngle={5}
-            dataKey="value"
-          >
-            {data.map((entry, index) => (
-              <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} stroke="none" />
-            ))}
-          </Pie>
-          <Tooltip 
-            contentStyle={{ backgroundColor: 'rgba(30, 41, 59, 0.9)', borderColor: '#475569', borderRadius: '12px', color: '#fff' }}
-          />
-          <Legend />
-        </PieChart>
-      </ResponsiveContainer>
+      <div className="w-full flex-1 min-w-0 min-h-[240px]">
+        <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={240}>
+          <PieChart>
+            <Pie
+              data={data}
+              cx="50%"
+              cy="50%"
+              innerRadius={60}
+              outerRadius={80}
+              paddingAngle={5}
+              dataKey="value"
+            >
+              {data.map((entry, index) => (
+                <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} stroke="none" />
+              ))}
+            </Pie>
+            <Tooltip 
+              contentStyle={{ backgroundColor: 'rgba(30, 41, 59, 0.9)', borderColor: '#475569', borderRadius: '12px', color: '#fff' }}
+            />
+            <Legend />
+          </PieChart>
+        </ResponsiveContainer>
+      </div>
     </div>
   );
 }

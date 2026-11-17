@@ -12,6 +12,7 @@ import {
   CalendarIcon,
   PlusIcon,
   CameraIcon,
+  ArrowUpTrayIcon,
   DocumentChartBarIcon,
   SparklesIcon
 } from "@heroicons/react/24/outline";
@@ -196,8 +197,8 @@ export default function Dashboard() {
                   <option value="last-month">Last Month</option>
                </select>
              </div>
-             <div className="h-64 w-full">
-               <ResponsiveContainer width="100%" height="100%">
+             <div className="h-64 w-full min-w-0">
+               <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={200}>
                  <AreaChart data={chartData}>
                    <defs>
                      <linearGradient id="colorAmount" x1="0" y1="0" x2="0" y2="1">
@@ -265,6 +266,9 @@ export default function Dashboard() {
                </button>
                <Link href="/scan-receipt" className="w-full flex items-center justify-center gap-2 bg-[#27272a] hover:bg-[#3f3f46] text-white font-medium py-3 rounded-xl transition-all border border-[#3f3f46]">
                   <CameraIcon className="w-5 h-5" /> Scan Receipt
+               </Link>
+               <Link href="/imports" className="w-full flex items-center justify-center gap-2 bg-[#27272a] hover:bg-[#3f3f46] text-white font-medium py-3 rounded-xl transition-all border border-[#3f3f46]">
+                  <ArrowUpTrayIcon className="w-5 h-5 text-emerald-400" /> Import Statement
                </Link>
                <Link href="/analytics" className="w-full flex items-center justify-center gap-2 bg-[#27272a] hover:bg-[#3f3f46] text-white font-medium py-3 rounded-xl transition-all border border-[#3f3f46]">
                   <DocumentChartBarIcon className="w-5 h-5" /> View Reports

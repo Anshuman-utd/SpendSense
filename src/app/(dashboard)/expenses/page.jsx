@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useEffect, useMemo, useRef } from 'react';
-import { MagnifyingGlassIcon, FunnelIcon, CalendarIcon, Squares2X2Icon, ListBulletIcon } from '@heroicons/react/24/outline';
+import Link from 'next/link';
+import { MagnifyingGlassIcon, FunnelIcon, CalendarIcon, Squares2X2Icon, ListBulletIcon, ArrowUpTrayIcon } from '@heroicons/react/24/outline';
 import AddExpenseModal from '@/components/expenses/AddExpenseModal';
 import MiniCalendar from '@/components/ui/MiniCalendar';
 import CategoryIcon, { getCategoryStyle } from '@/components/ui/CategoryIcon';
@@ -89,6 +90,13 @@ export default function ExpensesPage() {
         <div>
           <h1 className="text-3xl font-bold text-white mb-1">Expenses</h1>
         </div>
+        <Link
+          href="/imports"
+          className="flex items-center gap-2 px-4 py-2.5 bg-[#18181b] border border-[#27272a] rounded-xl text-sm font-medium text-zinc-300 hover:text-white hover:border-emerald-500/50 transition-colors"
+        >
+          <ArrowUpTrayIcon className="w-4 h-4 text-emerald-400" />
+          Import Statement
+        </Link>
       </div>
 
       {/* Filter Bar */}

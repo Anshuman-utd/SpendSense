@@ -12,6 +12,7 @@ import {
   CameraIcon,
   WalletIcon,
   ArrowPathIcon,
+  ArrowUpTrayIcon,
   Cog6ToothIcon
 } from '@heroicons/react/24/outline';
 import clsx from 'clsx';
@@ -20,12 +21,12 @@ const navigation = [
   { name: 'Dashboard', href: '/dashboard', icon: HomeIcon },
   { name: 'Expenses', href: '/expenses', icon: BanknotesIcon },
   { name: 'Scan Receipt', href: '/scan-receipt', icon: CameraIcon },
+  { name: 'Import Statements', href: '/imports', icon: ArrowUpTrayIcon },
   { name: 'Analytics', href: '/analytics', icon: ChartBarIcon },
   { name: 'AI Insights', href: '/ai-insights', icon: SparklesIcon },
   { name: 'Budget', href: '/budget', icon: WalletIcon },
   { name: 'Recurring', href: '/recurring', icon: ArrowPathIcon },
   { name: 'Settings', href: '/settings', icon: Cog6ToothIcon },
-  
 ];
 
 export default function Sidebar() {

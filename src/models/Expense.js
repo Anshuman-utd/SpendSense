@@ -48,8 +48,34 @@ const ExpenseSchema = new Schema({
         type: String,
         enum: ['active', 'inactive'],
         default: 'active',
-    }
+    },
+    source: {
+        type: String,
+        enum: ['manual', 'receipt_scan', 'import', 'recurring'],
+        default: 'manual',
+    },
+    importJobId: {
+        type: Schema.Types.ObjectId,
+        ref: 'ImportJob',
+    },
+    importedTransactionId: {
+        type: Schema.Types.ObjectId,
+        ref: 'ImportedTransaction',
+    },
+    financialAccountId: {
+        type: Schema.Types.ObjectId,
+        ref: 'FinancialAccount',
+    },
+    currency: {
+        type: String,
+        default: 'INR',
+    },
+    sourceReference: {
+        type: String,
+    },
 }, { timestamps: true });
+
+ExpenseSchema.index({ importedTransactionId: 1 }, { unique: true, sparse: true });
 
 const Expense = models.Expense || model('Expense', ExpenseSchema);
 

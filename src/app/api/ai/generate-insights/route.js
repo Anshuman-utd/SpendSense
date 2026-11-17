@@ -1,10 +1,10 @@
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
-import { GoogleGenerativeAI } from '@google/generative-ai';
 import { authOptions } from '../../auth/[...nextauth]/route';
 import Expense from '@/models/Expense';
 import AIInsight from '@/models/AIInsight';
 import connectDB from '@/lib/db';
+import { generateSpendingInsights } from '@/lib/groq';
 
 export async function POST(req) {
     try {
@@ -49,50 +49,13 @@ export async function POST(req) {
             }
         }
 
-        const summaryData = {
+        // 3. Send to Groq
+        const aiData = await generateSpendingInsights({
             totalSpent,
             topCategory,
             categoryBreakdown: categoryMap,
             transactionCount
-        };
-
-        // 3. Send to Google Gemini
-        if (!process.env.GOOGLE_API_KEY) {
-            throw new Error('GOOGLE_API_KEY is not defined in environment variables');
-        }
-        const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
-        const model = genAI.getGenerativeModel({ model: "gemini-flash-latest" });
-
-        const prompt = `
-      You are a personal finance advisor.
-      Here is the user's spending summary for the last 30 days:
-
-      Total Spent: ${totalSpent}
-      Top Category: ${topCategory}
-      Category Breakdown: ${JSON.stringify(categoryMap)}
-      Transactions: ${transactionCount}
-
-      Tasks:
-      1. Identify spending patterns (good or bad).
-      2. Explain why spending might be high/low based on the top category.
-      3. Give 3 actionable improvement tips.
-      4. Keep it simple, practical, and friendly.
-
-      Return a pure JSON object with:
-      - summary (string): A short 1-2 sentence overview of their spending.
-      - problems (array of strings): 1-2 identified issues or observations.
-      - tips (array of strings): 3 actionable tips.
-      
-      IMPORTANT: Return ONLY the JSON object. Do not wrap it in markdown code blocks.
-    `;
-
-        const result = await model.generateContent(prompt);
-        const response = await result.response;
-        const text = response.text();
-
-        // Clean up markdown if present
-        const cleanContent = text.replace(/```json/g, '').replace(/```/g, '').trim();
-        const aiData = JSON.parse(cleanContent);
+        });
 
         // 4. Save to DB
         const newInsight = await AIInsight.create({
@@ -104,7 +67,7 @@ export async function POST(req) {
         return NextResponse.json({ success: true, data: newInsight });
 
     } catch (error) {
-        console.error('Generate Insights Error:', error);
+        console.error('Generate Insights Error (Groq):', error);
         return NextResponse.json({ success: false, error: error.message || 'Failed to generate insights' }, { status: 500 });
     }
 }
